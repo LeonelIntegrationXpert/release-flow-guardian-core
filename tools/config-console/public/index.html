@@ -27,6 +27,7 @@
       <button class="nav" data-view="endpoints"><span>Endpoint Inventory</span><small>Contrato atual x baseline</small></button>
       <button class="nav" data-view="approvals"><span>Breaking Approval</span><small>Remoção, alteração e replacement</small></button>
       <button class="nav" data-view="breaking"><span>Breaking Changes</span><small>Arquivo de aprovação</small></button>
+      <button class="nav" data-view="history"><span>Change History</span><small>Auditoria de contrato</small></button>
 
       <div class="nav-group-label">Configuração</div>
       <button class="nav" data-view="project"><span>Projeto</span><small>Identidade</small></button>
@@ -136,6 +137,20 @@
         </div>
       </section>
 
+
+      <section id="history" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Change History</h2>
+              <p class="muted">Trilha auditável de criação, remoção, alteração, aprovação, revogação e decisões do Contract Guard. Inclui usuário Git, branch, commit, ticket e motivo.</p>
+            </div>
+            <button id="refreshHistory" class="btn primary">Atualizar histórico</button>
+          </div>
+          <div class="cards compact" id="historyCards"></div>
+          <div class="table-wrap"><table id="historyTable"></table></div>
+        </div>
+      </section>
       <section id="security" class="view">
         <div class="panel"><div class="panel-title"><h2>Secrets obrigatórios</h2><p>A tela nunca recebe valores reais. Ela mostra apenas os nomes esperados.</p></div><div id="secretList" class="secret-list"></div></div>
       </section>

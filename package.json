@@ -1,8 +1,8 @@
 {
   "name": "release-flow-guardian-core",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": false,
-  "description": "Reusable Release Flow Guardian Core with responsive console, Contract Guard intelligence and remote project support.",
+  "description": "Reusable Release Flow Guardian Core with responsive console, Contract Guard intelligence, audit history and remote project support.",
   "main": "bin/guardian.js",
   "bin": {
     "release-flow-guardian": "bin/guardian.js",
@@ -24,7 +24,9 @@
     "preflight": "node bin/guardian.js preflight",
     "ci:publish": "node bin/guardian.js ci:publish",
     "contract:extract:git-base": "node scripts/extract-git-base-contract.js api.raml dist/api-contract-git-base.json",
-    "version": "node bin/guardian.js version"
+    "version": "node bin/guardian.js version",
+    "history": "node bin/guardian.js history",
+    "history:summary": "node bin/guardian.js history:summary"
   },
   "dependencies": {
     "raml-1-parser": "1.1.67",

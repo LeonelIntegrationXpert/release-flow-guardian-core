@@ -6,7 +6,9 @@ let state = {
   diff: null,
   runtime: null,
   selectedApproval: null,
-  filter: 'all'
+  filter: 'all',
+  history: [],
+  historySummary: null
 };
 
 const FILE_MODE = window.location.protocol === 'file:';
@@ -303,6 +305,37 @@ function renderApprovalTable() {
   document.querySelectorAll('[data-revoke]').forEach(btn => btn.onclick = () => revokeApproval(btn.dataset.revoke));
 }
 
+
+function renderHistory() {
+  const events = state.history || [];
+  const summary = state.historySummary || {};
+  const byType = summary.byType || {};
+  const byDecision = summary.byDecision || {};
+  const actorCount = Object.keys(summary.byActor || {}).length;
+  const blocks = (byDecision.BLOCK || byDecision.BLOCKED || 0);
+  const approvals = Object.entries(byType).filter(([k]) => k.includes('APPROVAL') || k.includes('APPROVED')).reduce((acc, [,v]) => acc + Number(v || 0), 0);
+  if ($('historyCards')) {
+    $('historyCards').innerHTML = [
+      card('Eventos', summary.total || events.length || 0, 'INFO', 'histórico auditável'),
+      card('Atores', actorCount, 'INFO', 'usuários Git/CI'),
+      card('Aprovações', approvals, approvals ? 'WARN' : 'OK', 'criadas/revogadas'),
+      card('Blocks', blocks, blocks ? 'BLOCKED' : 'OK', 'mudanças bloqueadas')
+    ].join('');
+  }
+  if (!$('historyTable')) return;
+  $('historyTable').innerHTML = `<thead><tr><th>Data</th><th>Evento</th><th>Endpoint / mudança</th><th>Decisão</th><th>Ticket</th><th>Usuário Git/CI</th><th>Branch / commit</th></tr></thead><tbody>` + (events.length ? events.map(e => {
+    const oldEndpoint = e.oldPath ? `${e.oldMethod || ''} ${e.oldPath}`.trim() : '';
+    const newEndpoint = e.newPath ? `${e.newMethod || ''} ${e.newPath}`.trim() : '';
+    const endpoint = e.path ? `${e.method || ''} ${e.path}`.trim() : '';
+    const change = oldEndpoint || newEndpoint
+      ? `<code>${esc(oldEndpoint || '-')}</code><br><span class="subline">→ <code>${esc(newEndpoint || '-')}</code>${e.similarityScore ? ` • ${esc(e.similarityScore)}%` : ''}</span>`
+      : endpoint ? `<code>${esc(endpoint)}</code>` : `<span class="muted">${esc(e.message || e.changeType || '-')}</span>`;
+    const actor = `${esc(e.actor?.name || '-')}<br><span class="subline">${esc(e.actor?.email || e.actor?.gitUserEmail || '')}</span>`;
+    const git = `${esc(e.git?.branch || '-')}<br><span class="subline mono">${esc(e.git?.commitShort || '')}</span>`;
+    return `<tr><td>${esc(e.createdAt || '')}</td><td>${badge(e.eventType || 'EVENT')}</td><td>${change}</td><td>${badge(e.decision || e.severity || 'INFO')}</td><td>${esc(e.ticket || '-')}<br><span class="subline">${esc(e.reason || '')}</span></td><td>${actor}</td><td>${git}</td></tr>`;
+  }).join('') : '<tr><td colspan="7" class="muted">Nenhum evento histórico ainda. Rode o Contract Guard ou aprove uma alteração para gerar histórico.</td></tr>') + '</tbody>';
+}
+
 function openApprovalFromRow(id) {
   const row = endpointRows().find(r => r.id === id);
   if (!row) return;
@@ -378,8 +411,9 @@ async function loadAll() {
   state.baseline = await api('/api/endpoints/baseline');
   state.current = await api('/api/endpoints/current');
   try { state.diff = await api('/api/endpoints/diff'); } catch(e) { state.diff = { status:'BLOCKED', summary:{}, findings:[], possibleReplacements:[] }; }
+  try { const hist = await api('/api/history?limit=300'); state.history = hist.events || []; state.historySummary = hist.summary || {}; } catch(e) { state.history = []; state.historySummary = {}; }
   $('breakingText').value = JSON.stringify(state.breaking, null, 2);
-  renderRuntime(); renderForms(); renderDashboard(); renderEndpoints();
+  renderRuntime(); renderForms(); renderDashboard(); renderEndpoints(); renderHistory();
 }
 
 async function saveConfig() {
@@ -410,6 +444,7 @@ function bindUi() {
   $('toggleNav').onclick = () => $('sidebar').classList.toggle('open');
   $('refreshAll').onclick = loadAll;
   $('refreshEndpoints').onclick = loadAll;
+  if ($('refreshHistory')) $('refreshHistory').onclick = loadAll;
   $('validateConfig').onclick = async () => { const v = await api('/api/config/validate', { method:'POST', body: JSON.stringify({ config: state.config }) }); msg(v.valid ? 'Config válida.' : v.errors.join(' | '), !v.valid); };
   $('saveConfig').onclick = saveConfig;
   $('saveBreaking').onclick = saveBreaking;

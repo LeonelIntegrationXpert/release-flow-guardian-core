@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const { loadConfig, resolveStability } = require('./guardian-config');
+const { readHistory, getHistorySummary, appendHistoryEvent } = require('./guardian-history');
 
 const DIST_DIR = process.env.DIST_DIR || 'dist';
 const OUTPUT_HTML = path.join(DIST_DIR, 'release-flow-guardian-report.html');
@@ -39,6 +40,8 @@ const currentContract = readJson(path.join(DIST_DIR, 'api-contract-current.json'
 const baselineContract = readJson(path.join(DIST_DIR, 'api-contract-baseline-used.json'), readJson(config.contractGuard?.baselineFile || 'release/api-contract-baseline.json', { endpoints: [] }));
 const contractDiff = readJson(path.join(DIST_DIR, 'api-contract-diff.json'), { status: 'NOT_EXECUTED', findings: [], addedEndpoints: [], removedEndpoints: [], changedEndpoints: [], summary: {} });
 const exchangeReport = readJson(path.join(DIST_DIR, 'exchange-publish-report.json'), null);
+const historyEvents = readHistory(100).reverse();
+const historySummary = getHistorySummary();
 
 const context = {
   projectName: config.project?.name || process.env.APP_NAME || 'mule-tlf-com-test',
@@ -101,7 +104,8 @@ const summary = {
     inventory,
     possibleReplacements
   },
-  exchange: exchangeReport
+  exchange: exchangeReport,
+  history: { summary: historySummary, events: historyEvents.slice(-50) }
 };
 
 fs.writeFileSync(OUTPUT_JSON, JSON.stringify(summary, null, 2), 'utf8');
@@ -122,10 +126,13 @@ ${card('Removidos', summary.endpointGovernance.totalRemoved, summary.endpointGov
 ${card('Possible replacements', possibleReplacements.length, possibleReplacements.length ? 'WARNING' : 'OK', 'REMOVED + NEW parecido')}
 ${card('Aprovados', summary.endpointGovernance.totalApproved + approvedBreakingChanges.length, (summary.endpointGovernance.totalApproved + approvedBreakingChanges.length) ? 'WARNING' : 'OK', 'WARN + permite')}
 ${card('Exchange Version', exchangeReport?.resolvedVersion || 'N/A', exchangeReport?.status || 'INFO', exchangeReport?.latestVersionFound ? `Última: ${exchangeReport.latestVersionFound}` : 'Sem publish nesta execução')}
+${card('Histórico', historySummary.total || 0, 'INFO', 'eventos auditáveis')}
 </section>
 <section class="section"><h2>Endpoint Governance</h2><table><thead><tr><th>Status</th><th>Method</th><th>Path</th><th>Decision</th><th>Query Params</th><th>Responses</th></tr></thead><tbody>${rows(inventory, i => `<tr><td>${badge(i.status,i.status)}</td><td>${esc(i.endpoint.method)}</td><td class="mono">${esc(i.endpoint.path)}</td><td>${badge(i.decision,i.decision)}</td><td>${esc(Object.keys(i.endpoint.queryParameters||{}).join(', ') || '-')}</td><td>${esc(Object.keys(i.endpoint.responses||{}).join(', ') || '-')}</td></tr>`)}</tbody></table></section>
 <section class="section"><h2>Breaking Change Intelligence</h2><table><thead><tr><th>Type</th><th>Old endpoint</th><th>New endpoint</th><th>Similarity</th><th>Decision</th><th>Approval</th></tr></thead><tbody>${rows(possibleReplacements, p => `<tr><td>${badge(p.type || 'POSSIBLE_REPLACEMENT')}</td><td><strong>${esc(p.oldMethod)}</strong><br><span class="mono">${esc(p.oldPath)}</span></td><td><strong>${esc(p.newMethod)}</strong><br><span class="mono">${esc(p.newPath)}</span></td><td>${esc(p.similarityScore || 0)}%</td><td>${badge(p.decision || 'BLOCK')}</td><td>${badge(p.approvalStatus || 'NOT_APPROVED')}</td></tr>`, 6)}</tbody></table></section>
 <section class="section"><h2>Contract Guard Findings</h2><table><thead><tr><th>Severity</th><th>Rule</th><th>Message</th><th>Approval</th></tr></thead><tbody>${rows(findings, f => `<tr><td>${badge(f.severity,f.severity)}</td><td class="mono">${esc(f.ruleId)}</td><td>${esc(f.message)}</td><td>${f.details?.approval ? `${esc(f.details.approval.ticket)}<br>${esc(f.details.approval.reason)}` : '-'}</td></tr>`, 4)}</tbody></table></section>
+
+<section class="section"><h2>Change History</h2><table><thead><tr><th>Data</th><th>Evento</th><th>Mudança</th><th>Decisão</th><th>Ticket</th><th>Ator</th><th>Git</th></tr></thead><tbody>${rows(historyEvents.slice(-30).reverse(), e => { const oldEp = e.oldPath ? `${e.oldMethod || ''} ${e.oldPath}`.trim() : ''; const newEp = e.newPath ? `${e.newMethod || ''} ${e.newPath}`.trim() : ''; const ep = e.path ? `${e.method || ''} ${e.path}`.trim() : ''; const change = oldEp || newEp ? `${esc(oldEp || '-')}<br>→ ${esc(newEp || '-')}` : esc(ep || e.message || e.changeType || '-'); return `<tr><td>${esc(e.createdAt || '')}</td><td>${badge(e.eventType || 'EVENT')}</td><td class="mono">${change}</td><td>${badge(e.decision || e.severity || 'INFO')}</td><td>${esc(e.ticket || '-')}<br>${esc(e.reason || '')}</td><td>${esc(e.actor?.name || '-')}<br>${esc(e.actor?.email || e.actor?.gitUserEmail || '')}</td><td>${esc(e.git?.branch || '-')}<br><span class="mono">${esc(e.git?.commitShort || '')}</span></td></tr>`; }, 7)}</tbody></table></section>
 <section class="section"><h2>Exchange</h2><table><tbody><tr><td>Asset ID</td><td class="mono">${esc(context.assetId)}</td></tr><tr><td>Minor line</td><td>${esc(config.versioning?.minorLine || '1.0')}</td></tr><tr><td>Initial version</td><td>${esc(config.versioning?.initialVersion || '1.0.0')}</td></tr><tr><td>Resolved version</td><td>${esc(exchangeReport?.resolvedVersion || 'N/A')}</td></tr><tr><td>Publish result</td><td>${badge(exchangeReport?.status || 'NOT_PUBLISHED')}</td></tr></tbody></table></section>
 <section class="section"><h2>Stability / Baseline</h2><table><tbody><tr><td>Branch</td><td>${esc(stability.branch)}</td></tr><tr><td>Matched rule</td><td>${esc(stability.matchedRule)}</td></tr><tr><td>Stability</td><td>${badge(stability.stability, stability.stability)}</td></tr><tr><td>Baseline update allowed</td><td>${stability.baselineUpdateAllowed ? badge('OK','YES') : badge('WARN','NO')}</td></tr></tbody></table></section>
 <div class="footer">Gerado em ${esc(context.generatedAt)} • Release Flow Guardian</div>
@@ -155,11 +162,15 @@ const md = [
   '',
   ...(possibleReplacements.length ? possibleReplacements.map(p => `- [${p.decision || 'BLOCK'}] ${p.oldMethod} ${p.oldPath} -> ${p.newMethod} ${p.newPath} (${p.similarityScore || 0}%)`) : ['- Nenhum possible replacement.']),
   '',
+  '## Change History', '',
+  ...(historyEvents.slice(-20).reverse().length ? historyEvents.slice(-20).reverse().map(e => `- [${e.eventType}] ${e.oldPath ? `${e.oldMethod || ''} ${e.oldPath} -> ${e.newMethod || ''} ${e.newPath || ''}` : (e.path ? `${e.method || ''} ${e.path}` : e.message || e.changeType || '')} — ${e.decision || e.severity || 'INFO'} — ${e.actor?.email || e.actor?.name || 'unknown'}`) : ['- Nenhum evento histórico.']),
+  '',
   '## Findings', '',
   ...(findings.length ? findings.map(f => `- [${f.severity}] ${f.message} (${f.ruleId})`) : ['- Nenhum finding.']),
   ''
 ].join('\n');
 fs.writeFileSync(OUTPUT_MD, md, 'utf8');
+try { appendHistoryEvent({ source: 'report-html', eventType: 'REPORT_GENERATED', action: 'generated', changeType: 'report', severity: 'INFO', decision: finalStatus, file: OUTPUT_HTML, summary: summary.endpointGovernance }, { dedupe: false }); } catch (historyError) { console.warn(`⚠️ Não foi possível registrar histórico do report: ${historyError.message}`); }
 
 console.log('================================================================================');
 console.log('HTML REPORT');

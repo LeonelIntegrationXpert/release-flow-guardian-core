@@ -15,6 +15,11 @@ const {
   loadConfig,
   resolveStability
 } = require('../../scripts/guardian-config');
+const {
+  appendHistoryEvent,
+  readHistory,
+  getHistorySummary
+} = require('../../scripts/guardian-history');
 
 const CORE_ROOT = process.env.GUARDIAN_CORE_ROOT || CORE_DIR || path.resolve(__dirname, '..', '..');
 
@@ -149,6 +154,22 @@ function addEndpointApproval(input) {
   if (!exists) bc.removedEndpoints.push(item);
   backupFile(BREAKING_CHANGES_FILE);
   writeYamlFile(BREAKING_CHANGES_FILE, data);
+  appendHistoryEvent({
+    source: 'guardian-console',
+    eventType: 'ENDPOINT_REMOVAL_APPROVAL_CREATED',
+    action: 'approved',
+    changeType: 'removed-endpoint',
+    severity: 'WARN',
+    decision: 'WARN',
+    approvalStatus: 'APPROVED',
+    method: item.method,
+    path: item.path,
+    ticket: input.ticket,
+    approvedBy: input.approvedBy,
+    reason: input.reason,
+    replacement: item.replacement,
+    notes: item.notes
+  }, { dedupe: false });
   return data;
 }
 
@@ -161,6 +182,17 @@ function revokeEndpointApproval(input) {
   if (!bc.removedEndpoints.length && !bc.approvedRules.length) bc.approved = false;
   backupFile(BREAKING_CHANGES_FILE);
   writeYamlFile(BREAKING_CHANGES_FILE, data);
+  appendHistoryEvent({
+    source: 'guardian-console',
+    eventType: 'ENDPOINT_REMOVAL_APPROVAL_REVOKED',
+    action: 'revoked',
+    changeType: 'removed-endpoint',
+    severity: 'WARN',
+    decision: 'REVOKED',
+    approvalStatus: 'REVOKED',
+    method,
+    path: endpointPath
+  }, { dedupe: false });
   return data;
 }
 
@@ -225,6 +257,26 @@ function addBreakingApproval(input) {
 
   backupFile(BREAKING_CHANGES_FILE);
   writeYamlFile(BREAKING_CHANGES_FILE, data);
+  appendHistoryEvent({
+    source: 'guardian-console',
+    eventType: type === 'possibleReplacement' ? 'POSSIBLE_REPLACEMENT_APPROVAL_CREATED' : type === 'replacement' ? 'REPLACEMENT_APPROVAL_CREATED' : type === 'changedEndpoint' ? 'ENDPOINT_CHANGE_APPROVAL_CREATED' : 'ENDPOINT_REMOVAL_APPROVAL_CREATED',
+    action: 'approved',
+    changeType: type,
+    severity: 'WARN',
+    decision: 'WARN',
+    approvalStatus: 'APPROVED',
+    method: input.method || input.oldMethod || '',
+    path: input.path || input.oldPath || '',
+    oldMethod: input.oldMethod || input.method || '',
+    oldPath: input.oldPath || input.path || '',
+    newMethod: input.newMethod || input.method || '',
+    newPath: input.newPath || input.replacement || '',
+    similarityScore: Number(input.similarityScore || 0),
+    ticket: input.ticket,
+    approvedBy: input.approvedBy,
+    reason: input.reason,
+    notes: input.notes || ''
+  }, { dedupe: false });
   return data;
 }
 
@@ -244,6 +296,19 @@ function revokeBreakingApproval(input) {
   if (!bc.removedEndpoints.length && !bc.changedEndpoints.length && !bc.replacedEndpoints.length && !bc.possibleReplacements.length && !bc.approvedRules.length) bc.approved = false;
   backupFile(BREAKING_CHANGES_FILE);
   writeYamlFile(BREAKING_CHANGES_FILE, data);
+  appendHistoryEvent({
+    source: 'guardian-console',
+    eventType: 'BREAKING_CHANGE_APPROVAL_REVOKED',
+    action: 'revoked',
+    changeType: 'breaking-change-approval',
+    severity: 'WARN',
+    decision: 'REVOKED',
+    approvalStatus: 'REVOKED',
+    oldMethod,
+    oldPath,
+    newMethod,
+    newPath
+  }, { dedupe: false });
   return data;
 }
 
@@ -263,6 +328,16 @@ async function handleApi(req, res, url) {
       if (!validation.valid) return json(res, 400, validation);
       const backup = backupFile(CONFIG_PATH);
       writeYamlFile(CONFIG_PATH, config);
+      appendHistoryEvent({
+        source: 'guardian-console',
+        eventType: 'CONFIG_UPDATED',
+        action: 'updated',
+        changeType: 'config-file',
+        severity: 'INFO',
+        decision: 'OK',
+        file: 'release/guardian.config.yml',
+        backup
+      }, { dedupe: false });
       return json(res, 200, { saved: true, backup });
     }
     if (req.method === 'GET' && url.pathname === '/api/breaking-changes') {
@@ -277,6 +352,20 @@ async function handleApi(req, res, url) {
       }
       const backup = backupFile(BREAKING_CHANGES_FILE);
       writeYamlFile(BREAKING_CHANGES_FILE, data);
+      appendHistoryEvent({
+        source: 'guardian-console',
+        eventType: 'BREAKING_CHANGES_UPDATED',
+        action: 'updated',
+        changeType: 'breaking-changes-file',
+        severity: 'INFO',
+        decision: 'OK',
+        file: 'release/breaking-changes.yml',
+        backup,
+        approved: data.breakingChanges?.approved,
+        ticket: data.breakingChanges?.ticket || '',
+        approvedBy: data.breakingChanges?.approvedBy || '',
+        reason: data.breakingChanges?.reason || ''
+      }, { dedupe: false });
       return json(res, 200, { saved: true, backup, data });
     }
     if (req.method === 'GET' && url.pathname === '/api/endpoints/current') {
@@ -305,6 +394,13 @@ async function handleApi(req, res, url) {
     if (req.method === 'POST' && url.pathname === '/api/breaking-changes/revoke') {
       const body = await readBody(req);
       return json(res, 200, revokeBreakingApproval(body));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/history') {
+      const limit = Number(url.searchParams.get('limit') || 200);
+      return json(res, 200, { events: readHistory(limit), summary: getHistorySummary() });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/history/summary') {
+      return json(res, 200, getHistorySummary());
     }
     if (req.method === 'GET' && url.pathname === '/api/report/latest') {
       return json(res, 200, readJson(resolveProjectPath('dist/release-flow-guardian-report.json'), { status: 'NOT_FOUND' }));

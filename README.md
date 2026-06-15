@@ -79,3 +79,28 @@ jobs:
 Projeto consumidor guarda o contrato.
 Core guarda a inteligência.
 ```
+
+## Change History / Audit Trail
+
+O core agora registra uma trilha de auditoria no projeto consumidor.
+
+Arquivo principal:
+
+```text
+release/history/contract-change-history.jsonl
+```
+
+Também gera um snapshot de leitura rápida:
+
+```text
+dist/contract-change-history-latest.json
+```
+
+Comandos:
+
+```bash
+release-flow-guardian history --project "C:\repos\mule-tlf-com-test"
+release-flow-guardian history:summary --project "C:\repos\mule-tlf-com-test"
+```
+
+O histórico registra criação, remoção, alteração, possible replacement, aprovações, revogações, decisão do Contract Guard, usuário Git/CI, branch, commit, ticket e motivo. Veja `docs/history-audit-trail.md`.

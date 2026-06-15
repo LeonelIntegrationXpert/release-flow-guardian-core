@@ -6,6 +6,7 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 const YAML = require('yaml');
 const raml = require('raml-1-parser');
+const { appendHistoryEventsFromDiff } = require('./guardian-history');
 
 const DIST_DIR = process.env.DIST_DIR || 'dist';
 const CURRENT_RAML = process.env.API_MAIN_FILE || process.argv[2] || 'api.raml';
@@ -1000,6 +1001,12 @@ async function main() {
 
   fs.writeFileSync(DIFF_JSON, JSON.stringify(diff, null, 2), 'utf-8');
   writeMarkdown(diff);
+  try {
+    const historyEvents = appendHistoryEventsFromDiff(diff, { source: 'contract-guard' });
+    console.log(`Histórico de contrato: ${historyEvents.length} evento(s) novo(s).`);
+  } catch (historyError) {
+    console.warn(`⚠️ Não foi possível gravar histórico de contrato: ${historyError.message}`);
+  }
 
   console.log(`Stable Baseline Guard: ${diff.stableBaselineGuard.status}`);
   console.log(`Git Diff Guard:        ${diff.gitDiffGuard.status}`);

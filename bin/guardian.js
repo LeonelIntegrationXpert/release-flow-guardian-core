@@ -209,6 +209,12 @@ function runCommand(command) {
     case 'report:html':
       runNode('generate-html-report.js');
       break;
+    case 'history':
+      runNode('print-history.js');
+      break;
+    case 'history:summary':
+      runNode('print-history.js', ['--summary']);
+      break;
     case 'config:ui':
     case 'console':
       runConsole();
