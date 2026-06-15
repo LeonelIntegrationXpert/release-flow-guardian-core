@@ -1,8 +1,8 @@
 {
   "name": "release-flow-guardian-core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": false,
-  "description": "Reusable Release Flow Guardian Core for RAML APIs, Exchange publish, Contract Guard and local console.",
+  "description": "Reusable Release Flow Guardian Core with responsive console, Contract Guard intelligence and remote project support.",
   "main": "bin/guardian.js",
   "bin": {
     "release-flow-guardian": "bin/guardian.js",

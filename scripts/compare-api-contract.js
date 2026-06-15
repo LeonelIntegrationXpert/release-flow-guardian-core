@@ -230,18 +230,31 @@ async function extractContract(file) {
   };
 }
 
+function normalizeApprovalList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function loadBreakingChanges() {
-  if (!fs.existsSync(BREAKING_CHANGES_FILE)) {
-    return {
-      approved: false,
-      ticket: null,
-      approvedBy: null,
-      reason: null,
-      removedEndpoints: [],
-      approvedRules: [],
-      allowAllBreakingChanges: false
-    };
-  }
+  const empty = {
+    approved: false,
+    ticket: null,
+    approvedBy: null,
+    reason: null,
+    removedEndpoints: [],
+    changedEndpoints: [],
+    replacedEndpoints: [],
+    possibleReplacements: [],
+    removedMethods: [],
+    removedQueryParams: [],
+    removedUriParams: [],
+    removedResponses: [],
+    removedSecurity: [],
+    removedTraits: [],
+    approvedRules: [],
+    allowAllBreakingChanges: false
+  };
+
+  if (!fs.existsSync(BREAKING_CHANGES_FILE)) return empty;
 
   const raw = fs.readFileSync(BREAKING_CHANGES_FILE, 'utf-8');
   const parsed = YAML.parse(raw) || {};
@@ -252,21 +265,78 @@ function loadBreakingChanges() {
     ticket: cfg.ticket || null,
     approvedBy: cfg.approvedBy || null,
     reason: cfg.reason || null,
-    removedEndpoints: Array.isArray(cfg.removedEndpoints) ? cfg.removedEndpoints : [],
-    approvedRules: Array.isArray(cfg.approvedRules) ? cfg.approvedRules.map(String) : [],
+    removedEndpoints: normalizeApprovalList(cfg.removedEndpoints),
+    changedEndpoints: normalizeApprovalList(cfg.changedEndpoints),
+    replacedEndpoints: normalizeApprovalList(cfg.replacedEndpoints),
+    possibleReplacements: normalizeApprovalList(cfg.possibleReplacements),
+    removedMethods: normalizeApprovalList(cfg.removedMethods),
+    removedQueryParams: normalizeApprovalList(cfg.removedQueryParams),
+    removedUriParams: normalizeApprovalList(cfg.removedUriParams),
+    removedResponses: normalizeApprovalList(cfg.removedResponses),
+    removedSecurity: normalizeApprovalList(cfg.removedSecurity),
+    removedTraits: normalizeApprovalList(cfg.removedTraits),
+    approvedRules: normalizeApprovalList(cfg.approvedRules).map(String),
     allowAllBreakingChanges: Boolean(cfg.allowAllBreakingChanges)
   };
 }
 
 function approvalHasMinimumData(approval) {
-  return Boolean(approval.approved && approval.ticket && approval.approvedBy && approval.reason);
+  return Boolean(approval?.approved && approval.ticket && approval.approvedBy && approval.reason);
+}
+
+function itemApprovalHasMinimumData(approval, item) {
+  return Boolean(
+    (item?.ticket && item?.approvedBy && item?.reason) ||
+    approvalHasMinimumData(approval)
+  );
+}
+
+function approvalInfo(approval, item = {}) {
+  return {
+    ticket: item.ticket || approval.ticket || null,
+    approvedBy: item.approvedBy || approval.approvedBy || null,
+    reason: item.reason || approval.reason || null,
+    approvedAt: item.approvedAt || null,
+    notes: item.notes || ''
+  };
 }
 
 function isRemovedEndpointApproved(approval, endpoint) {
-  if (!approvalHasMinimumData(approval)) return false;
   return approval.removedEndpoints.some((item) => {
-    return String(item.method || '').toUpperCase() === endpoint.method && String(item.path || '') === endpoint.path;
+    return itemApprovalHasMinimumData(approval, item) &&
+      String(item.method || '').toUpperCase() === endpoint.method &&
+      String(item.path || '') === endpoint.path;
   });
+}
+
+function findRemovedEndpointApproval(approval, endpoint) {
+  return approval.removedEndpoints.find((item) => {
+    return itemApprovalHasMinimumData(approval, item) &&
+      String(item.method || '').toUpperCase() === endpoint.method &&
+      String(item.path || '') === endpoint.path;
+  }) || null;
+}
+
+function findPossibleReplacementApproval(approval, replacement) {
+  const oldMethod = String(replacement.oldMethod || '').toUpperCase();
+  const newMethod = String(replacement.newMethod || '').toUpperCase();
+  const oldPath = String(replacement.oldPath || '');
+  const newPath = String(replacement.newPath || '');
+
+  const match = (item) => {
+    const itemOldMethod = String(item.oldMethod || item.method || '').toUpperCase();
+    const itemNewMethod = String(item.newMethod || item.method || '').toUpperCase();
+    return itemApprovalHasMinimumData(approval, item) &&
+      itemOldMethod === oldMethod &&
+      String(item.oldPath || item.path || '') === oldPath &&
+      itemNewMethod === newMethod &&
+      String(item.newPath || item.replacement || '') === newPath;
+  };
+
+  return approval.replacedEndpoints.find(match) ||
+    approval.possibleReplacements.find(match) ||
+    approval.changedEndpoints.find(match) ||
+    null;
 }
 
 function isRuleApproved(approval, ruleId) {
@@ -309,7 +379,148 @@ function addBreaking(diff, ruleId, message, details = {}, approval) {
   }
 }
 
+function pathSegments(endpointPath = '') {
+  return String(endpointPath)
+    .split('/')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeSegment(segment = '') {
+  return String(segment).replace(/^\{/, ':').replace(/\}$/, '').toLowerCase();
+}
+
+function levenshtein(a = '', b = '') {
+  const left = String(a);
+  const right = String(b);
+  const matrix = Array.from({ length: left.length + 1 }, () => Array(right.length + 1).fill(0));
+  for (let i = 0; i <= left.length; i += 1) matrix[i][0] = i;
+  for (let j = 0; j <= right.length; j += 1) matrix[0][j] = j;
+  for (let i = 1; i <= left.length; i += 1) {
+    for (let j = 1; j <= right.length; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return matrix[left.length][right.length];
+}
+
+function textSimilarity(a = '', b = '') {
+  const left = String(a).toLowerCase();
+  const right = String(b).toLowerCase();
+  if (!left && !right) return 1;
+  const max = Math.max(left.length, right.length, 1);
+  return Math.max(0, 1 - levenshtein(left, right) / max);
+}
+
+function jaccard(left = [], right = []) {
+  const a = new Set(left.map(String));
+  const b = new Set(right.map(String));
+  if (!a.size && !b.size) return 1;
+  const intersection = [...a].filter((item) => b.has(item)).length;
+  const union = new Set([...a, ...b]).size || 1;
+  return intersection / union;
+}
+
+function endpointSimilarity(removed, added) {
+  const removedSegments = pathSegments(removed.path).map(normalizeSegment);
+  const addedSegments = pathSegments(added.path).map(normalizeSegment);
+  const removedQuery = Object.keys(removed.queryParameters || {});
+  const addedQuery = Object.keys(added.queryParameters || {});
+  const removedUri = Object.keys(removed.uriParameters || {});
+  const addedUri = Object.keys(added.uriParameters || {});
+  const removedResponses = Object.keys(removed.responses || {});
+  const addedResponses = Object.keys(added.responses || {});
+
+  let score = 0;
+  const reasons = [];
+
+  if (removed.method === added.method) {
+    score += 25;
+    reasons.push('method igual');
+  }
+
+  if (removedSegments[0] && removedSegments[0] === addedSegments[0]) {
+    score += 15;
+    reasons.push('mesma família de path');
+  }
+
+  const removedVersion = removedSegments.find((item) => /^v\d+$/i.test(item));
+  const addedVersion = addedSegments.find((item) => /^v\d+$/i.test(item));
+  if (removedVersion && addedVersion && removedVersion === addedVersion) {
+    score += 10;
+    reasons.push('mesma versão base');
+  } else if (removedVersion && addedVersion) {
+    score += 5;
+    reasons.push('versão alterada');
+  }
+
+  const pathScore = Math.round(textSimilarity(removed.path, added.path) * 25);
+  score += pathScore;
+  if (pathScore >= 18) reasons.push('path muito parecido');
+
+  const uriScore = Math.round(jaccard(removedUri, addedUri) * 10);
+  score += uriScore;
+  if (uriScore >= 7) reasons.push('URI params similares');
+
+  const queryScore = Math.round(jaccard(removedQuery, addedQuery) * 10);
+  score += queryScore;
+  if (queryScore >= 7) reasons.push('query params similares');
+
+  const responseScore = Math.round(jaccard(removedResponses, addedResponses) * 5);
+  score += responseScore;
+  if (responseScore >= 3) reasons.push('responses similares');
+
+  return { score: Math.min(100, score), reasons };
+}
+
+function detectPossibleReplacements(removedEndpoints = [], addedEndpoints = [], approval = {}, threshold = 70, strongThreshold = 85) {
+  const matches = [];
+
+  for (const removed of removedEndpoints) {
+    let best = null;
+
+    for (const added of addedEndpoints) {
+      const similarity = endpointSimilarity(removed, added);
+      if (similarity.score < threshold) continue;
+      if (!best || similarity.score > best.similarityScore) {
+        best = {
+          type: similarity.score >= strongThreshold ? 'STRONG_POSSIBLE_REPLACEMENT' : 'POSSIBLE_REPLACEMENT',
+          oldMethod: removed.method,
+          oldPath: removed.path,
+          oldId: removed.id,
+          newMethod: added.method,
+          newPath: added.path,
+          newId: added.id,
+          similarityScore: similarity.score,
+          similarityReasons: similarity.reasons,
+          breaking: true,
+          changeType: 'possible-replacement',
+          oldEndpoint: removed,
+          newEndpoint: added
+        };
+      }
+    }
+
+    if (best) {
+      const approvalItem = findPossibleReplacementApproval(approval, best);
+      best.approvalStatus = approvalItem ? 'APPROVED' : 'NOT_APPROVED';
+      best.decision = approvalItem ? 'WARN' : 'BLOCK';
+      best.approval = approvalItem ? approvalInfo(approval, approvalItem) : null;
+      matches.push(best);
+    }
+  }
+
+  return matches;
+}
+
 function compareContracts(base, current, approval) {
+  const threshold = Number(process.env.GUARDIAN_REPLACEMENT_THRESHOLD || 70);
+  const strongThreshold = Number(process.env.GUARDIAN_STRONG_REPLACEMENT_THRESHOLD || 85);
   const diff = {
     generatedAt: new Date().toISOString(),
     status: 'OK',
@@ -321,6 +532,7 @@ function compareContracts(base, current, approval) {
       addedEndpoints: 0,
       removedEndpoints: 0,
       changedEndpoints: 0,
+      possibleReplacements: 0,
       blocks: 0,
       warnings: 0,
       approvedWarnings: 0
@@ -328,6 +540,10 @@ function compareContracts(base, current, approval) {
     addedEndpoints: [],
     removedEndpoints: [],
     changedEndpoints: [],
+    possibleReplacements: [],
+    replacedEndpoints: [],
+    approvedBreakingChanges: [],
+    blockedBreakingChanges: [],
     findings: [],
     approval
   };
@@ -338,7 +554,6 @@ function compareContracts(base, current, approval) {
   for (const endpoint of current.endpoints || []) {
     if (!baseEndpoints.has(endpoint.id)) {
       diff.addedEndpoints.push(endpoint);
-      addFinding(diff, 'INFO', `ENDPOINT_ADDED:${endpoint.id}`, `Novo endpoint detectado: ${endpoint.id}`, endpoint);
     }
   }
 
@@ -346,19 +561,56 @@ function compareContracts(base, current, approval) {
     if (!currentEndpoints.has(endpoint.id)) {
       diff.removedEndpoints.push(endpoint);
       diff.summary.removedEndpoints += 1;
+    }
+  }
 
-      if (isRemovedEndpointApproved(approval, endpoint)) {
-        addFinding(diff, 'WARN_APPROVED', `ENDPOINT_REMOVED:${endpoint.id}`, `Endpoint removido com aprovação explícita: ${endpoint.id}`, {
-          endpoint,
-          approval: {
-            ticket: approval.ticket,
-            approvedBy: approval.approvedBy,
-            reason: approval.reason
-          }
-        });
+  diff.possibleReplacements = detectPossibleReplacements(diff.removedEndpoints, diff.addedEndpoints, approval, threshold, strongThreshold);
+  const replacementByOldId = new Map(diff.possibleReplacements.map((item) => [item.oldId, item]));
+  const replacementByNewId = new Map(diff.possibleReplacements.map((item) => [item.newId, item]));
+
+  for (const endpoint of diff.addedEndpoints) {
+    const replacement = replacementByNewId.get(endpoint.id);
+    if (replacement) {
+      addFinding(diff, 'INFO', `NEW_ENDPOINT_RELATED:${endpoint.id}`, `Novo endpoint relacionado a possível substituição: ${endpoint.id}`, {
+        endpoint,
+        relatedRemovedEndpoint: replacement.oldId,
+        similarityScore: replacement.similarityScore
+      });
+    } else {
+      addFinding(diff, 'INFO', `ENDPOINT_ADDED:${endpoint.id}`, `Novo endpoint detectado: ${endpoint.id}`, endpoint);
+    }
+  }
+
+  for (const endpoint of diff.removedEndpoints) {
+    const replacement = replacementByOldId.get(endpoint.id);
+
+    if (replacement) {
+      const ruleId = `POSSIBLE_REPLACEMENT:${replacement.oldId}->${replacement.newId}`;
+      const details = {
+        ...replacement,
+        oldEndpoint: replacement.oldEndpoint,
+        newEndpoint: replacement.newEndpoint
+      };
+
+      if (replacement.approvalStatus === 'APPROVED') {
+        diff.approvedBreakingChanges.push(replacement);
+        addFinding(diff, 'WARN_APPROVED', ruleId, `Possível substituição aprovada: ${replacement.oldId} -> ${replacement.newId}`, details);
       } else {
-        addFinding(diff, 'BLOCK', `ENDPOINT_REMOVED:${endpoint.id}`, `Endpoint removido sem aprovação: ${endpoint.id}`, endpoint);
+        diff.blockedBreakingChanges.push(replacement);
+        addFinding(diff, 'BLOCK', ruleId, `Possível alteração/substituição de endpoint sem aprovação: ${replacement.oldId} -> ${replacement.newId}`, details);
       }
+      continue;
+    }
+
+    const itemApproval = findRemovedEndpointApproval(approval, endpoint);
+    if (itemApproval) {
+      const approved = { endpoint, approval: approvalInfo(approval, itemApproval), type: 'REMOVED_ENDPOINT' };
+      diff.approvedBreakingChanges.push(approved);
+      addFinding(diff, 'WARN_APPROVED', `ENDPOINT_REMOVED:${endpoint.id}`, `Endpoint removido com aprovação explícita: ${endpoint.id}`, approved);
+    } else {
+      const blocked = { endpoint, type: 'REMOVED_ENDPOINT' };
+      diff.blockedBreakingChanges.push(blocked);
+      addFinding(diff, 'BLOCK', `ENDPOINT_REMOVED:${endpoint.id}`, `Endpoint removido sem aprovação: ${endpoint.id}`, endpoint);
     }
   }
 
@@ -371,7 +623,7 @@ function compareContracts(base, current, approval) {
     for (const scheme of before.securedBy || []) {
       if (!(after.securedBy || []).includes(scheme)) {
         const ruleId = `SECURITY_REMOVED:${id}:${scheme}`;
-        endpointChanges.push({ ruleId, type: 'security_removed', scheme });
+        endpointChanges.push({ ruleId, type: 'security_removed', scheme, breaking: true });
         addBreaking(diff, ruleId, `Security scheme removido do endpoint ${id}: ${scheme}`, { endpoint: id, scheme }, approval);
       }
     }
@@ -379,7 +631,7 @@ function compareContracts(base, current, approval) {
     for (const trait of before.traits || []) {
       if (!(after.traits || []).includes(trait)) {
         const ruleId = `TRAIT_REMOVED:${id}:${trait}`;
-        endpointChanges.push({ ruleId, type: 'trait_removed', trait });
+        endpointChanges.push({ ruleId, type: 'trait_removed', trait, breaking: true });
         addBreaking(diff, ruleId, `Trait removida do endpoint ${id}: ${trait}`, { endpoint: id, trait }, approval);
       }
     }
@@ -388,14 +640,14 @@ function compareContracts(base, current, approval) {
       const next = (after.uriParameters || {})[paramName];
       if (!next) {
         const ruleId = `URI_PARAM_REMOVED:${id}:${paramName}`;
-        endpointChanges.push({ ruleId, type: 'uri_param_removed', paramName });
+        endpointChanges.push({ ruleId, type: 'uri_param_removed', paramName, breaking: true });
         addBreaking(diff, ruleId, `URI param removido do endpoint ${id}: ${paramName}`, { endpoint: id, paramName }, approval);
         continue;
       }
 
       if (!sameType(param.type, next.type)) {
         const ruleId = `URI_PARAM_TYPE_CHANGED:${id}:${paramName}`;
-        endpointChanges.push({ ruleId, type: 'uri_param_type_changed', paramName, from: param.type, to: next.type });
+        endpointChanges.push({ ruleId, type: 'uri_param_type_changed', paramName, from: param.type, to: next.type, breaking: true });
         addBreaking(diff, ruleId, `Tipo de URI param alterado no endpoint ${id}: ${paramName}`, { endpoint: id, paramName, from: param.type, to: next.type }, approval);
       }
     }
@@ -405,7 +657,7 @@ function compareContracts(base, current, approval) {
       if (!next) {
         const severity = param.required ? 'BLOCK' : 'WARN';
         const ruleId = `QUERY_PARAM_REMOVED:${id}:${paramName}`;
-        endpointChanges.push({ ruleId, type: 'query_param_removed', paramName, required: param.required });
+        endpointChanges.push({ ruleId, type: 'query_param_removed', paramName, required: param.required, breaking: param.required });
 
         if (severity === 'BLOCK') {
           addBreaking(diff, ruleId, `Query param obrigatório removido do endpoint ${id}: ${paramName}`, { endpoint: id, paramName }, approval);
@@ -417,15 +669,15 @@ function compareContracts(base, current, approval) {
 
       if (!sameType(param.type, next.type)) {
         const ruleId = `QUERY_PARAM_TYPE_CHANGED:${id}:${paramName}`;
-        endpointChanges.push({ ruleId, type: 'query_param_type_changed', paramName, from: param.type, to: next.type });
+        endpointChanges.push({ ruleId, type: 'query_param_type_changed', paramName, from: param.type, to: next.type, breaking: true });
         addBreaking(diff, ruleId, `Tipo de query param alterado no endpoint ${id}: ${paramName}`, { endpoint: id, paramName, from: param.type, to: next.type }, approval);
       }
     }
 
-    for (const code of ['200', '201']) {
+    for (const code of ['200', '201', '202']) {
       if ((before.responses || {})[code] && !(after.responses || {})[code]) {
         const ruleId = `RESPONSE_REMOVED:${id}:${code}`;
-        endpointChanges.push({ ruleId, type: 'response_removed', code });
+        endpointChanges.push({ ruleId, type: 'success_response_removed', code, breaking: true });
         addBreaking(diff, ruleId, `Response ${code} removida do endpoint ${id}`, { endpoint: id, code }, approval);
       }
     }
@@ -434,16 +686,20 @@ function compareContracts(base, current, approval) {
       const next = (after.body || {})[mediaType];
       if (!next) {
         const ruleId = `REQUEST_BODY_REMOVED:${id}:${mediaType}`;
-        endpointChanges.push({ ruleId, type: 'request_body_removed', mediaType });
+        endpointChanges.push({ ruleId, type: 'request_body_removed', mediaType, breaking: true });
         addBreaking(diff, ruleId, `Request body removido do endpoint ${id}: ${mediaType}`, { endpoint: id, mediaType }, approval);
         continue;
       }
 
       if (!sameType(body.type, next.type)) {
         const ruleId = `REQUEST_BODY_TYPE_CHANGED:${id}:${mediaType}`;
-        endpointChanges.push({ ruleId, type: 'request_body_type_changed', mediaType, from: body.type, to: next.type });
+        endpointChanges.push({ ruleId, type: 'request_body_type_changed', mediaType, from: body.type, to: next.type, breaking: true });
         addBreaking(diff, ruleId, `Tipo de request body alterado no endpoint ${id}: ${mediaType}`, { endpoint: id, mediaType, from: body.type, to: next.type }, approval);
       }
+    }
+
+    if (before.description !== after.description || before.displayName !== after.displayName) {
+      endpointChanges.push({ ruleId: `DESCRIPTION_CHANGED:${id}`, type: 'description_changed', breaking: false });
     }
 
     if (endpointChanges.length) {
@@ -495,6 +751,7 @@ function compareContracts(base, current, approval) {
 
   diff.summary.addedEndpoints = diff.addedEndpoints.length;
   diff.summary.changedEndpoints = diff.changedEndpoints.length;
+  diff.summary.possibleReplacements = diff.possibleReplacements.length;
   diff.summary.blocks = diff.findings.filter((item) => item.severity === 'BLOCK').length;
   diff.summary.warnings = diff.findings.filter((item) => item.severity === 'WARN').length;
   diff.summary.approvedWarnings = diff.findings.filter((item) => item.severity === 'WARN_APPROVED').length;
@@ -586,6 +843,10 @@ function createMissingBaselineDiff(current) {
     addedEndpoints: current.endpoints,
     removedEndpoints: [],
     changedEndpoints: [],
+    possibleReplacements: [],
+    replacedEndpoints: [],
+    approvedBreakingChanges: [],
+    blockedBreakingChanges: [],
     findings: [
       {
         severity: 'WARN',
@@ -608,6 +869,10 @@ function toGuardSummary(name, diff, source) {
       removedEndpoints: [],
       addedEndpoints: [],
       changedEndpoints: [],
+      possibleReplacements: [],
+      replacedEndpoints: [],
+      approvedBreakingChanges: [],
+      blockedBreakingChanges: [],
       findings: []
     };
   }
@@ -619,6 +884,10 @@ function toGuardSummary(name, diff, source) {
     removedEndpoints: diff.removedEndpoints || [],
     addedEndpoints: diff.addedEndpoints || [],
     changedEndpoints: diff.changedEndpoints || [],
+    possibleReplacements: diff.possibleReplacements || [],
+    replacedEndpoints: diff.replacedEndpoints || [],
+    approvedBreakingChanges: diff.approvedBreakingChanges || [],
+    blockedBreakingChanges: diff.blockedBreakingChanges || [],
     findings: diff.findings || []
   };
 }
@@ -662,6 +931,7 @@ function writeMarkdown(diff) {
     `- **Added endpoints:** ${diff.summary.addedEndpoints}`,
     `- **Removed endpoints:** ${diff.summary.removedEndpoints}`,
     `- **Changed endpoints:** ${diff.summary.changedEndpoints}`,
+    `- **Possible replacements:** ${diff.summary.possibleReplacements || 0}`,
     `- **Blocks:** ${diff.summary.blocks}`,
     `- **Warnings:** ${diff.summary.warnings}`,
     `- **Approved warnings:** ${diff.summary.approvedWarnings}`,
@@ -673,6 +943,10 @@ function writeMarkdown(diff) {
     '## Removed endpoints',
     '',
     ...(diff.removedEndpoints.length ? diff.removedEndpoints.map((item) => `- - ${item.id}`) : ['- Nenhum endpoint removido.']),
+    '',
+    '## Possible replacements',
+    '',
+    ...((diff.possibleReplacements || []).length ? diff.possibleReplacements.map((item) => `- ${item.decision === 'WARN' ? 'WARN' : 'BLOCK'} ${item.oldId} -> ${item.newId} (${item.similarityScore}%)`) : ['- Nenhum possível replacement.']),
     '',
     '## Findings',
     '',

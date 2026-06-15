@@ -76,6 +76,10 @@ for (const id of new Set([...currentMap.keys(), ...baselineMap.keys()])) {
 }
 inventory.sort((a,b)=>a.id.localeCompare(b.id));
 
+const possibleReplacements = contractDiff.possibleReplacements || contractDiff.stableBaselineGuard?.possibleReplacements || [];
+const approvedBreakingChanges = contractDiff.approvedBreakingChanges || contractDiff.stableBaselineGuard?.approvedBreakingChanges || [];
+const blockedBreakingChanges = contractDiff.blockedBreakingChanges || contractDiff.stableBaselineGuard?.blockedBreakingChanges || [];
+
 const summary = {
   context,
   finalStatus,
@@ -91,7 +95,11 @@ const summary = {
     totalRemoved: inventory.filter(i => i.status === 'REMOVED').length,
     totalBlocked: inventory.filter(i => i.decision === 'BLOCK').length,
     totalApproved: inventory.filter(i => i.decision === 'APPROVED_REMOVAL').length,
-    inventory
+    totalPossibleReplacements: possibleReplacements.length,
+    approvedBreakingChanges: approvedBreakingChanges.length,
+    blockedBreakingChanges: blockedBreakingChanges.length,
+    inventory,
+    possibleReplacements
   },
   exchange: exchangeReport
 };
@@ -111,10 +119,12 @@ ${card('Endpoints atuais', currentEndpoints.length, contractDiff.status, `Baseli
 ${card('Blocks', contractDiff.summary?.blocks ?? 0, contractDiff.summary?.blocks ? 'BLOCKED' : 'OK', 'Quebras sem aprovação')}
 ${card('Novos', summary.endpointGovernance.totalNew, 'INFO', 'Permitido por padrão')}
 ${card('Removidos', summary.endpointGovernance.totalRemoved, summary.endpointGovernance.totalRemoved ? 'WARNING' : 'OK', 'Default: BLOCK')}
-${card('Aprovados', summary.endpointGovernance.totalApproved, summary.endpointGovernance.totalApproved ? 'WARNING' : 'OK', 'WARN + permite')}
+${card('Possible replacements', possibleReplacements.length, possibleReplacements.length ? 'WARNING' : 'OK', 'REMOVED + NEW parecido')}
+${card('Aprovados', summary.endpointGovernance.totalApproved + approvedBreakingChanges.length, (summary.endpointGovernance.totalApproved + approvedBreakingChanges.length) ? 'WARNING' : 'OK', 'WARN + permite')}
 ${card('Exchange Version', exchangeReport?.resolvedVersion || 'N/A', exchangeReport?.status || 'INFO', exchangeReport?.latestVersionFound ? `Última: ${exchangeReport.latestVersionFound}` : 'Sem publish nesta execução')}
 </section>
 <section class="section"><h2>Endpoint Governance</h2><table><thead><tr><th>Status</th><th>Method</th><th>Path</th><th>Decision</th><th>Query Params</th><th>Responses</th></tr></thead><tbody>${rows(inventory, i => `<tr><td>${badge(i.status,i.status)}</td><td>${esc(i.endpoint.method)}</td><td class="mono">${esc(i.endpoint.path)}</td><td>${badge(i.decision,i.decision)}</td><td>${esc(Object.keys(i.endpoint.queryParameters||{}).join(', ') || '-')}</td><td>${esc(Object.keys(i.endpoint.responses||{}).join(', ') || '-')}</td></tr>`)}</tbody></table></section>
+<section class="section"><h2>Breaking Change Intelligence</h2><table><thead><tr><th>Type</th><th>Old endpoint</th><th>New endpoint</th><th>Similarity</th><th>Decision</th><th>Approval</th></tr></thead><tbody>${rows(possibleReplacements, p => `<tr><td>${badge(p.type || 'POSSIBLE_REPLACEMENT')}</td><td><strong>${esc(p.oldMethod)}</strong><br><span class="mono">${esc(p.oldPath)}</span></td><td><strong>${esc(p.newMethod)}</strong><br><span class="mono">${esc(p.newPath)}</span></td><td>${esc(p.similarityScore || 0)}%</td><td>${badge(p.decision || 'BLOCK')}</td><td>${badge(p.approvalStatus || 'NOT_APPROVED')}</td></tr>`, 6)}</tbody></table></section>
 <section class="section"><h2>Contract Guard Findings</h2><table><thead><tr><th>Severity</th><th>Rule</th><th>Message</th><th>Approval</th></tr></thead><tbody>${rows(findings, f => `<tr><td>${badge(f.severity,f.severity)}</td><td class="mono">${esc(f.ruleId)}</td><td>${esc(f.message)}</td><td>${f.details?.approval ? `${esc(f.details.approval.ticket)}<br>${esc(f.details.approval.reason)}` : '-'}</td></tr>`, 4)}</tbody></table></section>
 <section class="section"><h2>Exchange</h2><table><tbody><tr><td>Asset ID</td><td class="mono">${esc(context.assetId)}</td></tr><tr><td>Minor line</td><td>${esc(config.versioning?.minorLine || '1.0')}</td></tr><tr><td>Initial version</td><td>${esc(config.versioning?.initialVersion || '1.0.0')}</td></tr><tr><td>Resolved version</td><td>${esc(exchangeReport?.resolvedVersion || 'N/A')}</td></tr><tr><td>Publish result</td><td>${badge(exchangeReport?.status || 'NOT_PUBLISHED')}</td></tr></tbody></table></section>
 <section class="section"><h2>Stability / Baseline</h2><table><tbody><tr><td>Branch</td><td>${esc(stability.branch)}</td></tr><tr><td>Matched rule</td><td>${esc(stability.matchedRule)}</td></tr><tr><td>Stability</td><td>${badge(stability.stability, stability.stability)}</td></tr><tr><td>Baseline update allowed</td><td>${stability.baselineUpdateAllowed ? badge('OK','YES') : badge('WARN','NO')}</td></tr></tbody></table></section>
@@ -137,8 +147,13 @@ const md = [
   `- Current endpoints: ${currentEndpoints.length}`,
   `- New endpoints: ${summary.endpointGovernance.totalNew}`,
   `- Removed endpoints: ${summary.endpointGovernance.totalRemoved}`,
-  `- Blocked removals: ${summary.endpointGovernance.totalBlocked}`,
+  `- Possible replacements: ${possibleReplacements.length}`,
+  `- Blocked removals: ${summary.endpointGovernance.totalBlocked}`, 
   `- Approved removals: ${summary.endpointGovernance.totalApproved}`,
+  '',
+  '## Breaking Change Intelligence',
+  '',
+  ...(possibleReplacements.length ? possibleReplacements.map(p => `- [${p.decision || 'BLOCK'}] ${p.oldMethod} ${p.oldPath} -> ${p.newMethod} ${p.newPath} (${p.similarityScore || 0}%)`) : ['- Nenhum possible replacement.']),
   '',
   '## Findings', '',
   ...(findings.length ? findings.map(f => `- [${f.severity}] ${f.message} (${f.ruleId})`) : ['- Nenhum finding.']),

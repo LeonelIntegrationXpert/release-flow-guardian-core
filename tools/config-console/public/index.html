@@ -7,8 +7,13 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <div class="mobile-topbar">
+    <button id="toggleNav" class="icon-btn" aria-label="Abrir menu">☰</button>
+    <div class="mobile-title"><strong>Release Flow</strong><span>Guardian Console</span></div>
+  </div>
+
   <div class="app-shell">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="brand">
         <span class="brand-dot"></span>
         <div>
@@ -16,23 +21,36 @@
           <small>Guardian Console</small>
         </div>
       </div>
-      <button class="nav active" data-view="dashboard">Dashboard</button>
-      <button class="nav" data-view="project">Projeto</button>
-      <button class="nav" data-view="exchange">Exchange</button>
-      <button class="nav" data-view="versioning">Versionamento</button>
-      <button class="nav" data-view="contract">Contract Guard</button>
-      <button class="nav" data-view="endpoints">Endpoint Inventory</button>
-      <button class="nav" data-view="approvals">Removal Approval</button>
-      <button class="nav" data-view="breaking">Breaking Changes</button>
-      <button class="nav" data-view="security">Secrets</button>
+
+      <div class="nav-group-label">Operação</div>
+      <button class="nav active" data-view="dashboard"><span>Dashboard</span><small>Status geral</small></button>
+      <button class="nav" data-view="endpoints"><span>Endpoint Inventory</span><small>Contrato atual x baseline</small></button>
+      <button class="nav" data-view="approvals"><span>Breaking Approval</span><small>Remoção, alteração e replacement</small></button>
+      <button class="nav" data-view="breaking"><span>Breaking Changes</span><small>Arquivo de aprovação</small></button>
+
+      <div class="nav-group-label">Configuração</div>
+      <button class="nav" data-view="project"><span>Projeto</span><small>Identidade</small></button>
+      <button class="nav" data-view="exchange"><span>Exchange</span><small>Asset e publish</small></button>
+      <button class="nav" data-view="versioning"><span>Versionamento</span><small>Stability e branch rules</small></button>
+      <button class="nav" data-view="contract"><span>Contract Guard</span><small>Regras de bloqueio</small></button>
+      <button class="nav" data-view="security"><span>Secrets</span><small>Checklist seguro</small></button>
+
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <div>
+          <strong>Local only</strong>
+          <small>Não exponha em rede pública</small>
+        </div>
+      </div>
     </aside>
 
     <main class="content">
       <header class="hero">
-        <div>
+        <div class="hero-copy">
           <span class="kicker">MuleSoft • RAML • Exchange</span>
           <h1>Release Flow Guardian Console</h1>
-          <p>Configure o projeto, enxergue endpoints, aprove remoções intencionais e bloqueie perda acidental de contrato antes de publicar no Exchange.</p>
+          <p>Configure o projeto, enxergue endpoints, aprove breaking changes intencionais e bloqueie perda acidental de contrato antes de publicar no Exchange.</p>
+          <div class="runtime-strip" id="runtimeInfo"></div>
         </div>
         <div class="hero-actions">
           <button id="refreshAll" class="btn primary">Atualizar tudo</button>
@@ -41,37 +59,46 @@
         </div>
       </header>
 
-      <section id="messages" class="messages"></section>
+      <section id="messages" class="messages" aria-live="polite"></section>
 
       <section id="dashboard" class="view active">
         <div class="cards" id="dashboardCards"></div>
-        <div class="panel">
-          <h2>Resumo do Guardian</h2>
-          <p class="muted">Default seguro: endpoint removido sem aprovação explícita vira <strong>BLOCK</strong>. Endpoint aprovado na tela vira <strong>WARN</strong> e pode seguir.</p>
+        <div class="panel grid-2">
+          <div>
+            <h2>Contract Protection Summary</h2>
+            <p class="muted">Default seguro: endpoint, método, parâmetro, response, security ou trait removido sem aprovação explícita vira <strong>BLOCK</strong>.</p>
+            <div class="decision-flow">
+              <span>NEW → OK</span>
+              <span>REMOVED → BLOCK</span>
+              <span>POSSIBLE_REPLACEMENT → BLOCK</span>
+              <span>APPROVED → WARN</span>
+            </div>
+          </div>
+          <div class="mini-panel" id="decisionPanel"></div>
         </div>
       </section>
 
       <section id="project" class="view">
-        <div class="panel"><h2>Projeto</h2><div class="form-grid" id="projectForm"></div></div>
+        <div class="panel"><div class="panel-title"><h2>Projeto</h2><p>Identidade da interface consumidora.</p></div><div class="form-grid" id="projectForm"></div></div>
       </section>
 
       <section id="exchange" class="view">
-        <div class="panel"><h2>Exchange</h2><div class="form-grid" id="exchangeForm"></div></div>
+        <div class="panel"><div class="panel-title"><h2>Exchange</h2><p>Publicação, auto bump e metadados do asset.</p></div><div class="form-grid" id="exchangeForm"></div></div>
       </section>
 
       <section id="versioning" class="view">
-        <div class="panel"><h2>Versionamento e Stability</h2><div class="form-grid" id="versioningForm"></div></div>
-        <div class="panel"><h3>Regra</h3><p class="muted">Se o asset não existe, publica a versão inicial. Se existe, pega a última versão da linha minor e aplica patch + 1. Apenas <strong>stable</strong> deve atualizar o baseline oficial.</p></div>
+        <div class="panel"><div class="panel-title"><h2>Versionamento e Stability</h2><p>Controle de release, branch rules e baseline stable-only.</p></div><div class="form-grid" id="versioningForm"></div></div>
+        <div class="panel"><h3>Regra premium</h3><p class="muted">Se o asset não existe, publica a versão inicial. Se existe, pega a última versão da linha minor e aplica patch + 1. Apenas <strong>stable</strong> atualiza o baseline oficial.</p></div>
       </section>
 
       <section id="contract" class="view">
-        <div class="panel"><h2>Contract Guard</h2><div class="form-grid" id="contractForm"></div></div>
+        <div class="panel"><div class="panel-title"><h2>Contract Guard</h2><p>Configuração de bloqueio para mudanças de contrato.</p></div><div class="form-grid" id="contractForm"></div></div>
       </section>
 
       <section id="endpoints" class="view">
         <div class="panel">
           <div class="panel-head">
-            <h2>Endpoint Inventory</h2>
+            <div><h2>Endpoint Inventory</h2><p class="muted">Current RAML x stable baseline, com inteligência para possible replacements.</p></div>
             <button id="refreshEndpoints" class="btn primary">Refresh Endpoint Inventory</button>
           </div>
           <div class="filters">
@@ -79,45 +106,70 @@
             <button class="filter" data-filter="new">Novos</button>
             <button class="filter" data-filter="removed">Removidos</button>
             <button class="filter" data-filter="changed">Alterados</button>
+            <button class="filter" data-filter="possible">Possible Replacement</button>
             <button class="filter" data-filter="blocked">Bloqueados</button>
             <button class="filter" data-filter="approved">Aprovados</button>
           </div>
           <div class="table-wrap"><table id="endpointTable"></table></div>
         </div>
+
+        <div class="panel" id="possiblePanel">
+          <div class="panel-title"><h2>Possible Replacements</h2><p>Quando um endpoint removido e um endpoint novo parecem ser a mesma intenção de contrato.</p></div>
+          <div class="table-wrap"><table id="possibleTable"></table></div>
+        </div>
       </section>
 
       <section id="approvals" class="view">
         <div class="panel">
-          <h2>Endpoint Removal Approval</h2>
-          <p class="muted">Aprovar remoção não altera o RAML. Apenas registra no <code>release/breaking-changes.yml</code> que a remoção detectada é intencional.</p>
+          <div class="panel-title">
+            <h2>Breaking Change Approval</h2>
+            <p>Aprovar breaking change não altera o RAML. Apenas registra evidência no <code>release/breaking-changes.yml</code>.</p>
+          </div>
           <div class="table-wrap"><table id="approvalTable"></table></div>
         </div>
       </section>
 
       <section id="breaking" class="view">
         <div class="panel">
-          <div class="panel-head"><h2>Breaking Changes YAML</h2><button id="saveBreaking" class="btn danger-outline">Salvar Breaking Changes</button></div>
+          <div class="panel-head"><div><h2>Breaking Changes</h2><p class="muted">Visual técnico do arquivo de aprovação. O salvamento gera backup.</p></div><button id="saveBreaking" class="btn danger-outline">Salvar Breaking Changes</button></div>
           <textarea id="breakingText" class="code-area" spellcheck="false"></textarea>
         </div>
       </section>
 
       <section id="security" class="view">
-        <div class="panel"><h2>Secrets obrigatórios</h2><div id="secretList" class="secret-list"></div><p class="muted">A tela nunca deve receber valor real de secret. Ela mostra apenas os nomes esperados no GitHub Actions/Azure DevOps.</p></div>
+        <div class="panel"><div class="panel-title"><h2>Secrets obrigatórios</h2><p>A tela nunca recebe valores reais. Ela mostra apenas os nomes esperados.</p></div><div id="secretList" class="secret-list"></div></div>
       </section>
     </main>
   </div>
 
   <div id="approvalModal" class="modal hidden">
     <div class="modal-card">
-      <h2>Aprovar remoção</h2>
+      <div class="modal-head">
+        <div>
+          <span class="kicker">Breaking Change Approval</span>
+          <h2 id="approvalTitle">Aprovar alteração</h2>
+        </div>
+        <button id="closeModal" class="icon-btn" aria-label="Fechar">×</button>
+      </div>
       <p id="approvalTarget" class="muted"></p>
-      <label>Ticket<input id="approvalTicket" placeholder="RLM202606-123" /></label>
-      <label>Aprovado por<input id="approvalBy" placeholder="leonel.d.porto@accenture.com" /></label>
-      <label>Motivo<textarea id="approvalReason" placeholder="Explique por que a remoção é intencional"></textarea></label>
-      <label>Substituto opcional<input id="approvalReplacement" placeholder="/release/v2/status/{releaseId}" /></label>
+      <div class="form-grid single">
+        <label>Tipo de aprovação
+          <select id="approvalType">
+            <option value="removedEndpoint">Approve as Removal</option>
+            <option value="possibleReplacement">Approve as Possible Replacement</option>
+            <option value="replacement">Approve as Replacement</option>
+            <option value="changedEndpoint">Approve as Change</option>
+          </select>
+        </label>
+        <label>Ticket<input id="approvalTicket" placeholder="RLM202606-123" /></label>
+        <label>Aprovado por<input id="approvalBy" placeholder="leonel.d.porto@accenture.com" /></label>
+        <label>Motivo<textarea id="approvalReason" placeholder="Explique por que a alteração é intencional"></textarea></label>
+        <label>Substituto / novo path<input id="approvalReplacement" placeholder="/release/v2/status/{releaseId}" /></label>
+        <label>Observações<textarea id="approvalNotes" placeholder="Notas opcionais"></textarea></label>
+      </div>
       <div class="modal-actions">
-        <button id="confirmApproval" class="btn primary">Approve Removal</button>
-        <button id="closeModal" class="btn">Cancelar</button>
+        <button id="confirmApproval" class="btn primary">Salvar aprovação</button>
+        <button id="cancelApproval" class="btn">Cancelar</button>
       </div>
     </div>
   </div>

@@ -113,6 +113,9 @@ function normalizeBreakingChanges(raw) {
   bc.reason = bc.reason || '';
   bc.allowAllBreakingChanges = Boolean(bc.allowAllBreakingChanges);
   bc.removedEndpoints = Array.isArray(bc.removedEndpoints) ? bc.removedEndpoints : [];
+  bc.changedEndpoints = Array.isArray(bc.changedEndpoints) ? bc.changedEndpoints : [];
+  bc.replacedEndpoints = Array.isArray(bc.replacedEndpoints) ? bc.replacedEndpoints : [];
+  bc.possibleReplacements = Array.isArray(bc.possibleReplacements) ? bc.possibleReplacements : [];
   bc.removedMethods = Array.isArray(bc.removedMethods) ? bc.removedMethods : [];
   bc.removedQueryParams = Array.isArray(bc.removedQueryParams) ? bc.removedQueryParams : [];
   bc.removedUriParams = Array.isArray(bc.removedUriParams) ? bc.removedUriParams : [];
@@ -156,6 +159,89 @@ function revokeEndpointApproval(input) {
   const endpointPath = input.path || '';
   bc.removedEndpoints = bc.removedEndpoints.filter(e => !(String(e.method || '').toUpperCase() === method && e.path === endpointPath));
   if (!bc.removedEndpoints.length && !bc.approvedRules.length) bc.approved = false;
+  backupFile(BREAKING_CHANGES_FILE);
+  writeYamlFile(BREAKING_CHANGES_FILE, data);
+  return data;
+}
+
+function addBreakingApproval(input) {
+  const type = String(input.type || input.approvalType || 'removedEndpoint');
+  const required = ['ticket', 'approvedBy', 'reason'];
+  for (const key of required) {
+    if (!input[key]) throw new Error(`Campo obrigatório ausente: ${key}`);
+  }
+
+  const data = normalizeBreakingChanges(readYamlFile(BREAKING_CHANGES_FILE, { breakingChanges: {} }));
+  const bc = data.breakingChanges;
+  bc.approved = true;
+  bc.ticket = input.ticket;
+  bc.approvedBy = input.approvedBy;
+  bc.reason = input.reason;
+
+  const base = {
+    ticket: input.ticket,
+    approvedBy: input.approvedBy,
+    reason: input.reason,
+    approvedAt: new Date().toISOString(),
+    notes: input.notes || ''
+  };
+
+  if (type === 'possibleReplacement' || type === 'replacement' || type === 'changedEndpoint') {
+    const oldMethod = String(input.oldMethod || input.method || '').toUpperCase();
+    const newMethod = String(input.newMethod || input.method || '').toUpperCase();
+    const oldPath = input.oldPath || input.path;
+    const newPath = input.newPath || input.replacement;
+    if (!oldMethod || !oldPath || !newMethod || !newPath) {
+      throw new Error('Aprovação de alteração/substituição exige oldMethod, oldPath, newMethod e newPath.');
+    }
+
+    const item = {
+      ...base,
+      oldMethod,
+      oldPath,
+      newMethod,
+      newPath,
+      similarityScore: Number(input.similarityScore || 0),
+      breaking: true,
+      replacementType: input.replacementType || (type === 'changedEndpoint' ? 'path-changed' : 'possible-replacement')
+    };
+
+    const targetList = type === 'changedEndpoint' ? bc.changedEndpoints : type === 'replacement' ? bc.replacedEndpoints : bc.possibleReplacements;
+    const exists = targetList.some((entry) => String(entry.oldMethod || entry.method || '').toUpperCase() === oldMethod && entry.oldPath === oldPath && String(entry.newMethod || entry.method || '').toUpperCase() === newMethod && entry.newPath === newPath);
+    if (!exists) targetList.push(item);
+  } else {
+    const method = String(input.method || '').toUpperCase();
+    const endpointPath = input.path || input.oldPath;
+    if (!method || !endpointPath) throw new Error('Aprovação de remoção exige method e path.');
+    const item = {
+      ...base,
+      method,
+      path: endpointPath,
+      replacement: input.replacement || input.newPath || ''
+    };
+    const exists = bc.removedEndpoints.some((entry) => String(entry.method || '').toUpperCase() === method && entry.path === endpointPath);
+    if (!exists) bc.removedEndpoints.push(item);
+  }
+
+  backupFile(BREAKING_CHANGES_FILE);
+  writeYamlFile(BREAKING_CHANGES_FILE, data);
+  return data;
+}
+
+function revokeBreakingApproval(input) {
+  const data = normalizeBreakingChanges(readYamlFile(BREAKING_CHANGES_FILE, { breakingChanges: {} }));
+  const bc = data.breakingChanges;
+  const oldMethod = String(input.oldMethod || input.method || '').toUpperCase();
+  const newMethod = String(input.newMethod || input.method || '').toUpperCase();
+  const oldPath = input.oldPath || input.path || '';
+  const newPath = input.newPath || input.replacement || '';
+
+  bc.removedEndpoints = bc.removedEndpoints.filter((entry) => !(String(entry.method || '').toUpperCase() === oldMethod && entry.path === oldPath));
+  for (const key of ['changedEndpoints', 'replacedEndpoints', 'possibleReplacements']) {
+    bc[key] = bc[key].filter((entry) => !(String(entry.oldMethod || entry.method || '').toUpperCase() === oldMethod && String(entry.oldPath || entry.path || '') === oldPath && (!newPath || String(entry.newMethod || entry.method || '').toUpperCase() === newMethod) && (!newPath || String(entry.newPath || entry.replacement || '') === newPath)));
+  }
+
+  if (!bc.removedEndpoints.length && !bc.changedEndpoints.length && !bc.replacedEndpoints.length && !bc.possibleReplacements.length && !bc.approvedRules.length) bc.approved = false;
   backupFile(BREAKING_CHANGES_FILE);
   writeYamlFile(BREAKING_CHANGES_FILE, data);
   return data;
@@ -211,6 +297,14 @@ async function handleApi(req, res, url) {
     if (req.method === 'POST' && url.pathname === '/api/endpoints/revoke-removal') {
       const body = await readBody(req);
       return json(res, 200, revokeEndpointApproval(body));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/breaking-changes/approve') {
+      const body = await readBody(req);
+      return json(res, 200, addBreakingApproval(body));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/breaking-changes/revoke') {
+      const body = await readBody(req);
+      return json(res, 200, revokeBreakingApproval(body));
     }
     if (req.method === 'GET' && url.pathname === '/api/report/latest') {
       return json(res, 200, readJson(resolveProjectPath('dist/release-flow-guardian-report.json'), { status: 'NOT_FOUND' }));
