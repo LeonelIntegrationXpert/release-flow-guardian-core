@@ -538,6 +538,9 @@ async function publishWithAutoBump(token, initialVersion) {
         "Exchange retornou 400 Bad Request",
         [
           "Motivo provável:",
+          "- ZIP contém exchange.json com placeholders ou metadados divergentes",
+          "- Se aparecer mismatch organizationId/groupId/version/apiVersion, gere o pacote com o core corrigido",
+          "- O raml.zip NÃO deve carregar exchange.json raiz quando a versão é auto bump",
           "- ZIP inválido",
           "- mainFile não encontrado",
           "- classifier/type inválido",

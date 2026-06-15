@@ -1,42 +1,39 @@
-# Release Flow Guardian Core — Estratégia Global
+# Estratégia de Globalização
 
-Este repositório é o motor global reutilizável do Release Flow Guardian.
+## Global no `release-flow-guardian-core`
 
-## Regra de arquitetura
-
-- Cada interface RAML mantém apenas seu contrato e suas configurações.
-- O `release-flow-guardian-core` mantém toda a inteligência reutilizável.
-
-## O que fica global
-
-- Validação de RAML
-- Validação de release manifest
-- Stable Baseline Guard
-- Git Diff Guard
-- API Contract Guard
+- scripts de validação
+- Contract Guard
 - Exchange Auto Bump
-- HTML Report
-- Console local de configuração
-- GitHub reusable workflow
-- Azure templates
+- HTML report
+- Console local
+- workflows reutilizáveis
+- templates Azure
 
-## O que fica local em cada interface
+## Local em cada interface
 
-- `api.raml`
+- RAML e includes
 - `release/guardian.config.yml`
-- `release/release-manifest.yml`
 - `release/api-contract-baseline.json`
 - `release/breaking-changes.yml`
+- secrets no GitHub/Azure
 
-## Proteção de contrato
+## Regra
 
-O Guardian usa duas camadas:
+Cada interface guarda seu contrato.
+O Guardian guarda a inteligência.
 
-1. **Stable Baseline Guard**: compara o RAML atual contra o último baseline stable oficial.
-2. **Git Diff Guard**: compara o RAML atual contra a branch base do PR ou `HEAD~1`.
+## Correção Exchange 400 por `exchange.json`
 
-A fonte oficial para bloquear é o baseline stable. O Git Diff Guard adiciona rastreabilidade.
+Quando a publicação usa auto bump, a versão final só é conhecida no momento do publish. Por isso o `raml.zip` gerado pelo core não inclui `exchange.json` raiz do projeto consumidor.
 
-## Regra default
+Se o pacote incluir um `exchange.json` com placeholders, o Exchange pode retornar 400 com mensagem semelhante a:
 
-Endpoint removido sem aprovação explícita em `release/breaking-changes.yml` bloqueia a release.
+```text
+Mismatch properties are: organizationId should be ... instead of undefined,
+groupId should be ... instead of ${EXCHANGE_GROUP_ID},
+version should be ... instead of ${EXCHANGE_ASSET_VERSION_AUTO_RESOLVED},
+apiVersion should be v1 instead of undefined
+```
+
+Regra: metadados de publish ficam em `release/guardian.config.yml` e variáveis de ambiente; o `exchange.json` raiz não é empacotado.

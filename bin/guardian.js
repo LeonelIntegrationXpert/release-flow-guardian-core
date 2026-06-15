@@ -2,16 +2,6 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-
-// When the core is linked locally (npm install ../release-flow-guardian-core),
-// dependencies may live in the consumer project's node_modules. Add that path
-// before loading third-party packages so local development behaves like GitHub install.
-process.env.NODE_PATH = [
-  path.resolve(process.cwd(), 'node_modules'),
-  process.env.NODE_PATH
-].filter(Boolean).join(path.delimiter);
-require('module').Module._initPaths();
-
 const YAML = require('yaml');
 
 const coreRoot = path.resolve(__dirname, '..');
@@ -44,6 +34,7 @@ function applyConfigToEnv() {
     EXCHANGE_ASSET_DESCRIPTION: exchange.assetDescription,
     EXCHANGE_MINOR_VERSION: versioning.minorLine,
     EXCHANGE_INITIAL_VERSION: versioning.initialVersion,
+    API_VERSION: exchange.apiVersion,
     EXCHANGE_MAX_CONFLICT_BUMPS: autoBump.max409Retries,
     EXCHANGE_MAX_TRANSIENT_RETRIES: autoBump.retry5xxMaxAttempts,
     EXCHANGE_ZIP: exchange.assetId ? `dist/${exchange.assetId}-exchange.zip` : undefined
@@ -113,7 +104,6 @@ function runCommand(command) {
   const config = readConfig();
   const mainFile = process.env.API_MAIN_FILE || config.project?.mainFile || config.exchange?.mainFile || 'api.raml';
   const currentContract = config.contractGuard?.currentContractFile || 'dist/api-contract-current.json';
-  const gitBaseContract = config.contractGuard?.gitBaseContractFile || 'dist/api-contract-git-base.json';
 
   switch (command) {
     case 'deps:check':
@@ -134,9 +124,6 @@ function runCommand(command) {
     case 'contract:extract':
       runNode('extract-raml-contract.js', [mainFile, currentContract]);
       break;
-    case 'contract:extract:git-base':
-      runNode('extract-git-base-contract.js', [mainFile, gitBaseContract]);
-      break;
     case 'contract:guard':
       runNode('compare-api-contract.js', [mainFile]);
       break;
@@ -154,7 +141,7 @@ function runCommand(command) {
       runConsole();
       break;
     case 'validate':
-      runMany(['deps:check', 'validate:config', 'validate:release', 'validate:raml', 'stability:resolve', 'contract:extract', 'contract:extract:git-base', 'contract:guard']);
+      runMany(['deps:check', 'validate:config', 'validate:release', 'validate:raml', 'stability:resolve', 'contract:extract', 'contract:guard']);
       break;
     case 'preflight':
       runMany(['validate', 'package:exchange', 'report:html']);
@@ -164,7 +151,7 @@ function runCommand(command) {
       break;
     case 'help':
     default:
-      console.log(`\nRelease Flow Guardian Core\n\nUsage:\n  release-flow-guardian <command>\n\nCommands:\n  deps:check\n  validate:config\n  validate:release\n  validate:raml\n  stability:resolve\n  contract:extract\n  contract:extract:git-base\n  contract:guard\n  package:exchange\n  publish:exchange\n  report:html\n  validate\n  preflight\n  ci:publish\n  config:ui | console\n`);
+      console.log(`\nRelease Flow Guardian Core\n\nUsage:\n  release-flow-guardian <command>\n\nCommands:\n  deps:check\n  validate:config\n  validate:release\n  validate:raml\n  stability:resolve\n  contract:extract\n  contract:guard\n  package:exchange\n  publish:exchange\n  report:html\n  validate\n  preflight\n  ci:publish\n  config:ui | console\n`);
       if (command && command !== 'help') process.exit(1);
   }
 }

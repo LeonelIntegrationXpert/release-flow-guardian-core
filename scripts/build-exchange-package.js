@@ -27,8 +27,11 @@ const includeCandidates = [
   'resourceTypes',
   'docs',
   'release',
-  'config/exchange.asset.json',
-  'exchange.json'
+  'config/exchange.asset.json'
+  // IMPORTANTE: não incluir exchange.json raiz no raml.zip.
+  // O Exchange CLI valida esse descriptor contra os metadados passados no publish.
+  // Como a versão é resolvida por auto bump no momento da publicação, um exchange.json
+  // com placeholders quebra com 400: mismatch groupId/version/apiVersion/organizationId.
 ];
 
 const required = [mainFile, 'release/release-manifest.yml'];
@@ -46,6 +49,11 @@ console.log('===================================================================
 console.log('📦 Gerando pacote Exchange');
 console.log('================================================================================');
 console.log(`Saída: ${outputZip}`);
+
+if (fs.existsSync('exchange.json')) {
+  console.log('⚠️  exchange.json encontrado na raiz do projeto, mas NÃO será incluído no raml.zip.');
+  console.log('   Motivo: evita erro 400 de mismatch no Anypoint Exchange quando a versão é resolvida por auto bump.');
+}
 
 const output = fs.createWriteStream(outputZip);
 const archive = archiver('zip', { zlib: { level: 9 } });
