@@ -526,8 +526,26 @@ function detectGitBaselineRef() {
   return candidates;
 }
 
-async function loadBaselineContract() {
+async function loadStaticBaselineContract() {
   fs.mkdirSync(DIST_DIR, { recursive: true });
+  if (fs.existsSync(STATIC_BASELINE_FILE)) {
+    const contract = JSON.parse(fs.readFileSync(STATIC_BASELINE_FILE, 'utf-8'));
+    contract.source = STATIC_BASELINE_FILE;
+    return contract;
+  }
+  return null;
+}
+
+async function loadGitBaseContract() {
+  const gitBaseFile = process.env.API_CONTRACT_GIT_BASE || path.join(DIST_DIR, 'api-contract-git-base.json');
+  if (fs.existsSync(gitBaseFile)) {
+    try {
+      const contract = JSON.parse(fs.readFileSync(gitBaseFile, 'utf-8'));
+      if (contract.status === 'SKIPPED') return null;
+      contract.source = contract.source || gitBaseFile;
+      return contract;
+    } catch (_) {}
+  }
 
   for (const ref of detectGitBaselineRef()) {
     const result = run('git', ['show', ref]);
@@ -546,13 +564,90 @@ async function loadBaselineContract() {
     }
   }
 
-  if (fs.existsSync(STATIC_BASELINE_FILE)) {
-    const contract = JSON.parse(fs.readFileSync(STATIC_BASELINE_FILE, 'utf-8'));
-    contract.source = STATIC_BASELINE_FILE;
-    return contract;
+  return null;
+}
+
+function createMissingBaselineDiff(current) {
+  return {
+    generatedAt: new Date().toISOString(),
+    status: 'WARNING',
+    baselineSource: 'none',
+    currentSource: CURRENT_RAML,
+    summary: {
+      previousEndpoints: 0,
+      currentEndpoints: current.endpoints.length,
+      addedEndpoints: current.endpoints.length,
+      removedEndpoints: 0,
+      changedEndpoints: 0,
+      blocks: 0,
+      warnings: 1,
+      approvedWarnings: 0
+    },
+    addedEndpoints: current.endpoints,
+    removedEndpoints: [],
+    changedEndpoints: [],
+    findings: [
+      {
+        severity: 'WARN',
+        ruleId: 'BASELINE_NOT_FOUND',
+        message: 'Baseline stable não encontrado. Esta execução será usada apenas como inventário inicial.',
+        details: {}
+      }
+    ],
+    approval: loadBreakingChanges()
+  };
+}
+
+function toGuardSummary(name, diff, source) {
+  if (!diff) {
+    return {
+      name,
+      status: 'SKIPPED',
+      source: source || 'not-found',
+      summary: {},
+      removedEndpoints: [],
+      addedEndpoints: [],
+      changedEndpoints: [],
+      findings: []
+    };
+  }
+  return {
+    name,
+    status: diff.status,
+    source: source || diff.baselineSource,
+    summary: diff.summary,
+    removedEndpoints: diff.removedEndpoints || [],
+    addedEndpoints: diff.addedEndpoints || [],
+    changedEndpoints: diff.changedEndpoints || [],
+    findings: diff.findings || []
+  };
+}
+
+function mergeFinalDecision(stableDiff, gitDiff) {
+  const stableStatus = stableDiff?.status || 'WARNING';
+  const gitStatus = gitDiff?.status || 'SKIPPED';
+
+  if (stableStatus === 'BLOCKED' || gitStatus === 'BLOCKED') {
+    return {
+      status: 'BLOCKED',
+      canPublishExchange: false,
+      reason: stableStatus === 'BLOCKED'
+        ? 'Stable Baseline Guard bloqueou a publicação.'
+        : 'Git Diff Guard detectou breaking change crítica nesta alteração.'
+    };
   }
 
-  return null;
+  if (stableStatus === 'WARNING' || gitStatus === 'WARNING' || gitStatus === 'SKIPPED') {
+    return {
+      status: 'WARNING',
+      canPublishExchange: true,
+      reason: gitStatus === 'SKIPPED'
+        ? 'Git Diff Guard não foi executado; Stable Baseline Guard permaneceu como fonte oficial.'
+        : 'Existem warnings aprovados ou não críticos.'
+    };
+  }
+
+  return { status: 'OK', canPublishExchange: true, reason: 'Contrato aprovado.' };
 }
 
 function writeMarkdown(diff) {
@@ -599,64 +694,54 @@ async function main() {
   fs.mkdirSync(DIST_DIR, { recursive: true });
   fs.writeFileSync(CURRENT_CONTRACT, JSON.stringify(current, null, 2), 'utf-8');
 
-  const baseline = await loadBaselineContract();
-  if (!baseline) {
-    const diff = {
-      generatedAt: new Date().toISOString(),
-      status: 'WARNING',
-      baselineSource: 'none',
-      currentSource: CURRENT_RAML,
-      summary: {
-        previousEndpoints: 0,
-        currentEndpoints: current.endpoints.length,
-        addedEndpoints: current.endpoints.length,
-        removedEndpoints: 0,
-        changedEndpoints: 0,
-        blocks: 0,
-        warnings: 1,
-        approvedWarnings: 0
-      },
-      addedEndpoints: current.endpoints,
-      removedEndpoints: [],
-      changedEndpoints: [],
-      findings: [
-        {
-          severity: 'WARN',
-          ruleId: 'BASELINE_NOT_FOUND',
-          message: 'Baseline anterior não encontrado. Esta execução será usada apenas como inventário inicial.',
-          details: {}
-        }
-      ],
-      approval: loadBreakingChanges()
-    };
+  const approval = loadBreakingChanges();
+  const stableBaseline = await loadStaticBaselineContract();
+  let stableDiff;
 
-    fs.writeFileSync(CURRENT_CONTRACT, JSON.stringify(current, null, 2), 'utf-8');
+  if (!stableBaseline) {
+    stableDiff = createMissingBaselineDiff(current);
     fs.writeFileSync(BASELINE_USED, JSON.stringify({ endpoints: [], types: {}, source: 'none' }, null, 2), 'utf-8');
-    fs.writeFileSync(DIFF_JSON, JSON.stringify(diff, null, 2), 'utf-8');
-    writeMarkdown(diff);
-    console.warn('⚠️ Baseline não encontrado. Contract Guard ficou em WARNING.');
-    return;
+  } else {
+    fs.writeFileSync(BASELINE_USED, JSON.stringify(stableBaseline, null, 2), 'utf-8');
+    stableDiff = compareContracts(stableBaseline, current, approval);
+    stableDiff.baselineSource = stableBaseline.source || STATIC_BASELINE_FILE;
   }
 
-  fs.writeFileSync(BASELINE_USED, JSON.stringify(baseline, null, 2), 'utf-8');
-  const approval = loadBreakingChanges();
-  const diff = compareContracts(baseline, current, approval);
+  const gitBase = await loadGitBaseContract();
+  let gitDiff = null;
+  if (gitBase) {
+    gitDiff = compareContracts(gitBase, current, approval);
+    gitDiff.baselineSource = gitBase.source || 'git-base';
+  }
+
+  const finalDecision = mergeFinalDecision(stableDiff, gitDiff);
+  const diff = {
+    ...stableDiff,
+    status: finalDecision.status,
+    stableBaselineGuard: toGuardSummary('Stable Baseline Guard', stableDiff, stableDiff.baselineSource || STATIC_BASELINE_FILE),
+    gitDiffGuard: toGuardSummary('Git Diff Guard', gitDiff, gitBase?.source || 'SKIPPED'),
+    finalDecision,
+    sourcePriority: ['stable-baseline', 'git-diff']
+  };
 
   fs.writeFileSync(DIFF_JSON, JSON.stringify(diff, null, 2), 'utf-8');
   writeMarkdown(diff);
 
-  console.log(`Status: ${diff.status}`);
-  console.log(`Endpoints anteriores: ${diff.summary.previousEndpoints}`);
-  console.log(`Endpoints atuais:     ${diff.summary.currentEndpoints}`);
-  console.log(`Blocks:              ${diff.summary.blocks}`);
-  console.log(`Warnings:            ${diff.summary.warnings}`);
+  console.log(`Stable Baseline Guard: ${diff.stableBaselineGuard.status}`);
+  console.log(`Git Diff Guard:        ${diff.gitDiffGuard.status}`);
+  console.log(`Final decision:        ${diff.finalDecision.status}`);
+  console.log(`Can publish Exchange:  ${diff.finalDecision.canPublishExchange}`);
+  console.log(`Endpoints baseline:    ${diff.summary.previousEndpoints || 0}`);
+  console.log(`Endpoints atuais:      ${diff.summary.currentEndpoints || 0}`);
+  console.log(`Blocks:                ${diff.summary.blocks || 0}`);
+  console.log(`Warnings:              ${diff.summary.warnings || 0}`);
 
-  if (diff.status === 'BLOCKED') {
+  if (diff.finalDecision.status === 'BLOCKED') {
     console.error('❌ API Contract Guard bloqueou a release. Veja dist/api-contract-diff.md');
     process.exit(1);
   }
 
-  if (diff.status === 'WARNING') {
+  if (diff.finalDecision.status === 'WARNING') {
     console.warn('⚠️ API Contract Guard passou com warning. Veja dist/api-contract-diff.md');
     return;
   }

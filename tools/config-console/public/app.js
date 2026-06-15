@@ -9,7 +9,7 @@ function showFileModeNotice() {
   box.className = 'file-mode-warning';
   box.innerHTML = `
     <strong>Console aberto via arquivo local.</strong>
-    <span>Para funcionar 100%, rode <code>npm run config:ui</code> na raiz do projeto e acesse <a href="http://127.0.0.1:3030">http://127.0.0.1:3030</a>.</span>
+    <span>Para funcionar 100%, rode <code>tools\guardian.cmd</code> e escolha Abrir console local. Acesse <a href="http://127.0.0.1:3030">http://127.0.0.1:3030</a>.</span>
     <span>Mesmo assim, vou tentar usar a API local em <code>http://127.0.0.1:3030</code>.</span>
   `;
   document.body.prepend(box);
@@ -37,7 +37,7 @@ async function api(path, options = {}) {
     });
   } catch (error) {
     if (FILE_MODE) {
-      throw new Error('Console aberto pelo index.html direto. Rode npm run config:ui na raiz do projeto e abra http://127.0.0.1:3030. Detalhe: ' + error.message);
+      throw new Error('Console aberto pelo index.html direto. Rode tools\\guardian.cmd e escolha Abrir console local. Abra http://127.0.0.1:3030. Detalhe: ' + error.message);
     }
     throw error;
   }

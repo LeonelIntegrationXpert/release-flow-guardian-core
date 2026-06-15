@@ -1,74 +1,67 @@
 # Release Flow Guardian Core
 
-Motor global reutilizável para governança de APIs RAML/Design Center.
+Motor global reutilizável para validação RAML, Contract Guard, Endpoint Governance, geração de report e publicação RAML no Anypoint Exchange.
 
-Ele centraliza:
+Este repositório deve concentrar a inteligência. Os projetos consumidores devem manter apenas o contrato RAML, arquivos `release/*` e um launcher simples em `tools/guardian.cmd`.
 
-- Validação RAML
-- Release manifest validation
-- API Contract Guard
-- Endpoint removal approval
-- Exchange Auto Bump
-- HTML/JSON/Markdown report
-- Console local de configuração
-- GitHub reusable workflow
-- Azure DevOps templates
-
-## Instalação local em uma interface
-
-Dentro do repositório da interface RAML:
+## Uso com projeto consumidor
 
 ```bash
-npm install --save-dev ../release-flow-guardian-core
-npx release-flow-guardian validate
-npx release-flow-guardian preflight
-npx release-flow-guardian console
+node bin/guardian.js validate --project "C:\\caminho\\mule-tlf-com-test"
+node bin/guardian.js preflight --project "C:\\caminho\\mule-tlf-com-test"
+node bin/guardian.js console --project "C:\\caminho\\mule-tlf-com-test"
+node bin/guardian.js report:html --project "C:\\caminho\\mule-tlf-com-test"
 ```
 
-Depois que este core estiver no GitHub:
+O core resolve todos os arquivos a partir do `--project`:
 
-```bash
-npm install --save-dev github:LeonelIntegrationXpert/release-flow-guardian-core#main
+```text
+api.raml
+release/guardian.config.yml
+release/api-contract-baseline.json
+release/breaking-changes.yml
+release/release-manifest.yml
+dist/
 ```
 
 ## Comandos
 
-```bash
-npx release-flow-guardian deps:check
-npx release-flow-guardian validate:config
-npx release-flow-guardian validate:release
-npx release-flow-guardian validate:raml
-npx release-flow-guardian stability:resolve
-npx release-flow-guardian contract:extract
-npx release-flow-guardian contract:guard
-npx release-flow-guardian package:exchange
-npx release-flow-guardian publish:exchange
-npx release-flow-guardian report:html
-npx release-flow-guardian validate
-npx release-flow-guardian preflight
-npx release-flow-guardian ci:publish
-npx release-flow-guardian console
+```text
+deps:check
+validate:config
+validate:release
+validate:raml
+stability:resolve
+contract:extract
+contract:extract:git-base
+contract:guard
+package:exchange
+publish:exchange
+report:html
+validate
+preflight
+ci:publish
+console
+version
 ```
 
-## O que fica no repositório da interface
+## Console local
 
-Cada interface RAML mantém apenas os arquivos específicos:
+```bash
+node bin/guardian.js console --project "C:\\caminho\\mule-tlf-com-test"
+```
+
+Acesse:
 
 ```text
-api.raml
-examples/
-types/
-traits/
-securitySchemes/
-release/guardian.config.yml
-release/release-manifest.yml
-release/api-contract-baseline.json
-release/breaking-changes.yml
+http://127.0.0.1:3030
 ```
 
-## GitHub Actions reutilizável
+O console sempre lê e grava arquivos no projeto consumidor informado por `--project`, nunca dentro do core.
 
-No repositório da interface:
+## Reusable workflow GitHub
+
+Projetos consumidores podem usar:
 
 ```yaml
 jobs:
@@ -76,17 +69,13 @@ jobs:
     uses: LeonelIntegrationXpert/release-flow-guardian-core/.github/workflows/raml-ci-exchange.yml@main
     with:
       config-path: release/guardian.config.yml
-      publish-exchange: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
-    secrets:
-      ANYPOINT_CONNECTED_APP_CLIENT_ID: ${{ secrets.ANYPOINT_CONNECTED_APP_CLIENT_ID }}
-      ANYPOINT_CONNECTED_APP_CLIENT_SECRET: ${{ secrets.ANYPOINT_CONNECTED_APP_CLIENT_SECRET }}
-      ANYPOINT_ORG: ${{ secrets.ANYPOINT_ORG }}
-      ANYPOINT_HOST: ${{ secrets.ANYPOINT_HOST }}
-      EXCHANGE_GROUP_ID: ${{ secrets.EXCHANGE_GROUP_ID }}
+      guardian-ref: main
+      publish-exchange: false
 ```
 
-## Regra principal
+## Regra de arquitetura
 
-Código fonte fica em cada interface.
-A inteligência de validação fica no Guardian Core.
-
+```text
+Projeto consumidor guarda o contrato.
+Core guarda a inteligência.
+```

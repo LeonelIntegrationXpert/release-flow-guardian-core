@@ -15,6 +15,14 @@ on:
         required: false
         type: boolean
         default: false
+      node-version:
+        required: false
+        type: string
+        default: "20"
+      run-console:
+        required: false
+        type: boolean
+        default: false
     secrets:
       ANYPOINT_CONNECTED_APP_CLIENT_ID:
         required: false
@@ -49,7 +57,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ inputs.node-version }}
 
       - name: Install Release Flow Guardian Core
         run: |
@@ -127,7 +135,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ inputs.node-version }}
 
       - name: Install Release Flow Guardian Core
         run: |

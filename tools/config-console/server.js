@@ -5,7 +5,10 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const YAML = require('yaml');
 const {
+  PROJECT_DIR,
+  CORE_DIR,
   CONFIG_PATH,
+  resolveProjectPath,
   readYamlFile,
   writeYamlFile,
   backupFile,
@@ -13,15 +16,17 @@ const {
   resolveStability
 } = require('../../scripts/guardian-config');
 
-const CORE_ROOT = process.env.GUARDIAN_CORE_ROOT || path.resolve(__dirname, '..', '..');
+const CORE_ROOT = process.env.GUARDIAN_CORE_ROOT || CORE_DIR || path.resolve(__dirname, '..', '..');
+
+try { process.chdir(PROJECT_DIR); } catch (_) {}
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.GUARDIAN_CONSOLE_PORT || 3030);
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const BREAKING_CHANGES_FILE = 'release/breaking-changes.yml';
-const BASELINE_FILE = 'release/api-contract-baseline.json';
-const CURRENT_CONTRACT_FILE = 'dist/api-contract-current.json';
-const DIFF_FILE = 'dist/api-contract-diff.json';
+const BREAKING_CHANGES_FILE = resolveProjectPath('release/breaking-changes.yml');
+const BASELINE_FILE = resolveProjectPath('release/api-contract-baseline.json');
+const CURRENT_CONTRACT_FILE = resolveProjectPath('dist/api-contract-current.json');
+const DIFF_FILE = resolveProjectPath('dist/api-contract-diff.json');
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -59,9 +64,9 @@ function readBody(req) {
 function runNode(script, args = []) {
   const fullScript = path.isAbsolute(script) ? script : path.join(CORE_ROOT, script);
   return spawnSync(process.execPath, [fullScript, ...args], {
-    cwd: process.cwd(),
+    cwd: PROJECT_DIR,
     encoding: 'utf8',
-    env: process.env,
+    env: { ...process.env, GUARDIAN_PROJECT_DIR: PROJECT_DIR, GUARDIAN_CORE_ROOT: CORE_ROOT, GUARDIAN_CONFIG: CONFIG_PATH },
     timeout: 120000
   });
 }
@@ -75,7 +80,7 @@ function validateConfigObject(config) {
   const errors = [];
   if (!config.project?.name) errors.push('project.name obrigatório');
   if (!config.project?.mainFile) errors.push('project.mainFile obrigatório');
-  if (config.project?.mainFile && !fs.existsSync(config.project.mainFile)) errors.push(`mainFile não existe: ${config.project.mainFile}`);
+  if (config.project?.mainFile && !fs.existsSync(resolveProjectPath(config.project.mainFile))) errors.push(`mainFile não existe: ${config.project.mainFile}`);
   if (!config.exchange?.assetId) errors.push('exchange.assetId obrigatório');
   if (!/^\d+\.\d+$/.test(String(config.versioning?.minorLine || ''))) errors.push('versioning.minorLine deve estar no formato x.y');
   if (!/^\d+\.\d+\.\d+$/.test(String(config.versioning?.initialVersion || ''))) errors.push('versioning.initialVersion deve estar no formato x.y.z');
@@ -86,8 +91,10 @@ function validateConfigObject(config) {
 }
 
 function ensureContracts() {
-  fs.mkdirSync('dist', { recursive: true });
-  const extract = runNode('scripts/extract-raml-contract.js', ['api.raml', CURRENT_CONTRACT_FILE]);
+  fs.mkdirSync(resolveProjectPath('dist'), { recursive: true });
+  const config = loadConfig();
+  const mainFile = config.project?.mainFile || config.exchange?.mainFile || 'api.raml';
+  const extract = runNode('scripts/extract-raml-contract.js', [mainFile, CURRENT_CONTRACT_FILE]);
   const compare = runNode('scripts/compare-api-contract.js', ['api.raml']);
   return { extract, compare };
 }
@@ -157,7 +164,7 @@ function revokeEndpointApproval(input) {
 async function handleApi(req, res, url) {
   try {
     if (req.method === 'GET' && url.pathname === '/api/config') {
-      return json(res, 200, { config: loadConfig(), stability: resolveStability(loadConfig()) });
+      return json(res, 200, { config: loadConfig(), stability: resolveStability(loadConfig()), runtime: { projectDir: PROJECT_DIR, coreDir: CORE_ROOT, ref: process.env.GUARDIAN_CORE_REF || process.env.CORE_REF || 'local' } });
     }
     if (req.method === 'POST' && url.pathname === '/api/config/validate') {
       const body = await readBody(req);
@@ -206,7 +213,7 @@ async function handleApi(req, res, url) {
       return json(res, 200, revokeEndpointApproval(body));
     }
     if (req.method === 'GET' && url.pathname === '/api/report/latest') {
-      return json(res, 200, readJson('dist/release-flow-guardian-report.json', { status: 'NOT_FOUND' }));
+      return json(res, 200, readJson(resolveProjectPath('dist/release-flow-guardian-report.json'), { status: 'NOT_FOUND' }));
     }
     return json(res, 404, { error: 'API route not found' });
   } catch (error) {
@@ -240,5 +247,7 @@ server.listen(PORT, HOST, () => {
   console.log('Release Flow Guardian Console');
   console.log('================================================================================');
   console.log(`URL: http://${HOST}:${PORT}`);
+  console.log(`Projeto carregado: ${PROJECT_DIR}`);
+  console.log(`Core carregado: ${CORE_ROOT}`);
   console.log('Ferramenta local. Não exponha em rede pública.');
 });

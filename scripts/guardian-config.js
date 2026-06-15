@@ -2,17 +2,27 @@ const fs = require('fs');
 const path = require('path');
 const YAML = require('yaml');
 
-const CONFIG_PATH = process.env.GUARDIAN_CONFIG || 'release/guardian.config.yml';
+const PROJECT_DIR = path.resolve(process.env.GUARDIAN_PROJECT_DIR || process.cwd());
+const CORE_DIR = path.resolve(process.env.GUARDIAN_CORE_ROOT || path.join(__dirname, '..'));
+const CONFIG_PATH_INPUT = process.env.GUARDIAN_CONFIG || 'release/guardian.config.yml';
+const CONFIG_PATH = path.isAbsolute(CONFIG_PATH_INPUT) ? CONFIG_PATH_INPUT : path.join(PROJECT_DIR, CONFIG_PATH_INPUT);
+
+function resolveProjectPath(filePath) {
+  if (!filePath) return filePath;
+  return path.isAbsolute(filePath) ? filePath : path.join(PROJECT_DIR, filePath);
+}
 
 function readYamlFile(filePath, fallback = {}) {
-  if (!fs.existsSync(filePath)) return fallback;
-  const raw = fs.readFileSync(filePath, 'utf8');
+  const fullPath = resolveProjectPath(filePath);
+  if (!fs.existsSync(fullPath)) return fallback;
+  const raw = fs.readFileSync(fullPath, 'utf8');
   return YAML.parse(raw) || fallback;
 }
 
 function writeYamlFile(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, YAML.stringify(data), 'utf8');
+  const fullPath = resolveProjectPath(filePath);
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, YAML.stringify(data), 'utf8');
 }
 
 function loadConfig() {
@@ -25,12 +35,13 @@ function timestamp() {
 }
 
 function backupFile(filePath) {
-  if (!fs.existsSync(filePath)) return null;
-  const parsed = path.parse(filePath);
-  const backupDir = path.join('release', 'backups');
+  const fullPath = resolveProjectPath(filePath);
+  if (!fs.existsSync(fullPath)) return null;
+  const parsed = path.parse(fullPath);
+  const backupDir = path.join(PROJECT_DIR, 'release', 'backups');
   fs.mkdirSync(backupDir, { recursive: true });
   const backupPath = path.join(backupDir, `${parsed.name}.${timestamp()}${parsed.ext}`);
-  fs.copyFileSync(filePath, backupPath);
+  fs.copyFileSync(fullPath, backupPath);
   return backupPath;
 }
 
@@ -82,7 +93,10 @@ function resolveStability(config, branch = getBranchName()) {
 }
 
 module.exports = {
+  PROJECT_DIR,
+  CORE_DIR,
   CONFIG_PATH,
+  resolveProjectPath,
   readYamlFile,
   writeYamlFile,
   loadConfig,
