@@ -15,6 +15,7 @@ const {
   loadConfig,
   resolveStability
 } = require('../../scripts/guardian-config');
+const { CONFIG_UI_SCHEMA, DEFAULT_CONFIG, applyDefaults, OPTIONS } = require('../../config/guardian-config-ui.schema');
 const {
   appendHistoryEvent,
   readHistory,
@@ -81,18 +82,62 @@ function readJson(file, fallback = null) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
-function validateConfigObject(config) {
+function getByPath(obj, pathExpr) {
+  return String(pathExpr).split('.').reduce((acc, key) => acc && acc[key], obj);
+}
+
+function isAllowed(value, options) {
+  const values = (options || []).map((item) => typeof item === 'object' ? item.value : item);
+  return values.includes(String(value || ''));
+}
+
+function isBoolean(value) { return typeof value === 'boolean'; }
+function isNumberBetween(value, min, max) { const n = Number(value); return Number.isFinite(n) && n >= min && n <= max; }
+
+function validateConfigObject(inputConfig) {
+  const config = applyDefaults(inputConfig || {});
   const errors = [];
-  if (!config.project?.name) errors.push('project.name obrigatório');
-  if (!config.project?.mainFile) errors.push('project.mainFile obrigatório');
-  if (config.project?.mainFile && !fs.existsSync(resolveProjectPath(config.project.mainFile))) errors.push(`mainFile não existe: ${config.project.mainFile}`);
-  if (!config.exchange?.assetId) errors.push('exchange.assetId obrigatório');
-  if (!/^\d+\.\d+$/.test(String(config.versioning?.minorLine || ''))) errors.push('versioning.minorLine deve estar no formato x.y');
-  if (!/^\d+\.\d+\.\d+$/.test(String(config.versioning?.initialVersion || ''))) errors.push('versioning.initialVersion deve estar no formato x.y.z');
+  const warn = [];
+  const push = (condition, message) => { if (!condition) errors.push(message); };
+
+  push(Boolean(config.project?.name), 'project.name obrigatório');
+  push(Boolean(config.project?.mainFile), 'project.mainFile obrigatório');
+  if (config.project?.mainFile) push(fs.existsSync(resolveProjectPath(config.project.mainFile)), `mainFile não existe: ${config.project.mainFile}`);
+  push(Boolean(config.exchange?.assetId), 'exchange.assetId obrigatório');
+  push(Boolean(config.exchange?.assetName), 'exchange.assetName obrigatório');
+  push(/^\d+\.\d+$/.test(String(config.versioning?.minorLine || '')), 'versioning.minorLine deve estar no formato x.y');
+  push(/^\d+\.\d+\.\d+$/.test(String(config.versioning?.initialVersion || '')), 'versioning.initialVersion deve estar no formato x.y.z');
+
   const allowed = config.versioning?.stability?.allowed || [];
-  if (!allowed.includes(config.versioning?.stability?.default)) errors.push('stability.default precisa estar dentro de stability.allowed');
-  if (Number(config.exchange?.autoBump?.max409Retries) < 0) errors.push('max409Retries precisa ser >= 0');
-  return { valid: errors.length === 0, errors };
+  push(allowed.includes(config.versioning?.stability?.default), 'stability.default precisa estar dentro de stability.allowed');
+  push(isAllowed(config.contractGuard?.baselineMode, OPTIONS.baselineMode), 'contractGuard.baselineMode inválido');
+  push(isAllowed(config.exchange?.classifier, OPTIONS.classifier), 'exchange.classifier inválido');
+  push(isAllowed(config.reports?.style, OPTIONS.reportStyle), 'reports.style inválido');
+  push(isAllowed(config.versioning?.strategy, OPTIONS.versioningStrategy), 'versioning.strategy inválido');
+
+  const cd = config.contractGuard?.changeDetection || {};
+  push(isNumberBetween(cd.similarityThreshold, 0, 100), 'similarityThreshold precisa estar entre 0 e 100');
+  push(isNumberBetween(cd.strongSimilarityThreshold, 0, 100), 'strongSimilarityThreshold precisa estar entre 0 e 100');
+  push(Number(cd.strongSimilarityThreshold) >= Number(cd.similarityThreshold), 'strongSimilarityThreshold deve ser maior ou igual ao similarityThreshold');
+  for (const key of ['sameMethodWeight','pathSimilarityWeight','sameFirstSegmentWeight','sameVersionWeight','uriParamsSimilarityWeight','queryParamsSimilarityWeight','responsesSimilarityWeight']) {
+    push(Number(cd[key]) >= 0, `${key} precisa ser número >= 0`);
+  }
+
+  const behavior = config.contractGuard?.defaultBehavior || {};
+  for (const key of ['newEndpoint','removedEndpoint','possibleReplacement','replacedEndpointWithoutApproval','changedBreakingEndpoint','changedNonBreakingEndpoint','approvedBreakingChange']) {
+    push(['ok','warn','block'].includes(String(behavior[key] || '')), `defaultBehavior.${key} precisa ser ok, warn ou block`);
+  }
+
+  for (const key of ['enabled','blockRemovedEndpoints','blockRemovedMethods','blockRemovedRequiredQueryParams','blockRemovedUriParams','blockRemovedSuccessResponses','blockRemovedSecurity','blockRemovedTraits','allowApprovedBreakingChanges']) {
+    push(isBoolean(config.contractGuard?.[key]), `contractGuard.${key} precisa ser boolean`);
+  }
+
+  if (config.contractGuard?.baselineFile) push(fs.existsSync(resolveProjectPath(config.contractGuard.baselineFile)), `baselineFile não existe: ${config.contractGuard.baselineFile}`);
+  if (config.contractGuard?.breakingChangesFile) push(fs.existsSync(resolveProjectPath(config.contractGuard.breakingChangesFile)), `breakingChangesFile não existe: ${config.contractGuard.breakingChangesFile}`);
+  if (!config.restore?.createBackupBeforeRestore) warn.push('Restore sem backup antes de restaurar não é recomendado.');
+  if (config.contractGuard?.baselineMode === 'disabled') warn.push('Baseline Guard desativado não é recomendado para produção.');
+
+  return { valid: errors.length === 0, errors, warnings: warn, config };
 }
 
 function ensureContracts() {
@@ -315,7 +360,17 @@ function revokeBreakingApproval(input) {
 async function handleApi(req, res, url) {
   try {
     if (req.method === 'GET' && url.pathname === '/api/config') {
-      return json(res, 200, { config: loadConfig(), stability: resolveStability(loadConfig()), runtime: { projectDir: PROJECT_DIR, coreDir: CORE_ROOT, ref: process.env.GUARDIAN_CORE_REF || process.env.CORE_REF || 'local' } });
+      const config = loadConfig();
+      return json(res, 200, { config, stability: resolveStability(config), runtime: { projectDir: PROJECT_DIR, coreDir: CORE_ROOT, ref: process.env.GUARDIAN_CORE_REF || process.env.CORE_REF || 'local' } });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/config/schema') {
+      return json(res, 200, { schema: CONFIG_UI_SCHEMA, defaults: DEFAULT_CONFIG });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/config/defaults') {
+      return json(res, 200, { defaults: DEFAULT_CONFIG });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/config/presets') {
+      return json(res, 200, { presets: CONFIG_UI_SCHEMA.presets });
     }
     if (req.method === 'POST' && url.pathname === '/api/config/validate') {
       const body = await readBody(req);
@@ -323,7 +378,7 @@ async function handleApi(req, res, url) {
     }
     if (req.method === 'POST' && url.pathname === '/api/config/save') {
       const body = await readBody(req);
-      const config = body.config || body;
+      const config = applyDefaults(body.config || body);
       const validation = validateConfigObject(config);
       if (!validation.valid) return json(res, 400, validation);
       const backup = backupFile(CONFIG_PATH);

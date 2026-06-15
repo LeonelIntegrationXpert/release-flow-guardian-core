@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const YAML = require('yaml');
+const { applyDefaults, DEFAULT_CONFIG } = require('../config/guardian-config-ui.schema');
 
 const PROJECT_DIR = path.resolve(process.env.GUARDIAN_PROJECT_DIR || process.cwd());
 const CORE_DIR = path.resolve(process.env.GUARDIAN_CORE_ROOT || path.join(__dirname, '..'));
@@ -25,8 +26,12 @@ function writeYamlFile(filePath, data) {
   fs.writeFileSync(fullPath, YAML.stringify(data), 'utf8');
 }
 
-function loadConfig() {
+function loadRawConfig() {
   return readYamlFile(CONFIG_PATH, {});
+}
+
+function loadConfig() {
+  return applyDefaults(loadRawConfig());
 }
 
 function timestamp() {
@@ -99,8 +104,10 @@ module.exports = {
   resolveProjectPath,
   readYamlFile,
   writeYamlFile,
+  loadRawConfig,
   loadConfig,
   backupFile,
   getBranchName,
-  resolveStability
+  resolveStability,
+  DEFAULT_CONFIG
 };

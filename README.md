@@ -104,3 +104,24 @@ release-flow-guardian history:summary --project "C:\repos\mule-tlf-com-test"
 ```
 
 O histórico registra criação, remoção, alteração, possible replacement, aprovações, revogações, decisão do Contract Guard, usuário Git/CI, branch, commit, ticket e motivo. Veja `docs/history-audit-trail.md`.
+
+
+## Guided Configuration Console
+
+A versão atual do console usa um catálogo central de configuração (`config/guardian-config-ui.schema.js`) para renderizar campos com defaults recomendados, dropdowns, toggles, help text, validação e presets.
+
+Principais melhorias:
+
+- `Similarity threshold` default `70` e `Strong similarity threshold` default `85`.
+- `Baseline mode` agora é dropdown: `stable-only`, `git-base-only`, `stable-and-git`, `disabled`.
+- Decisões padrão agora usam dropdown: `ok`, `warn`, `block`.
+- Toggles visuais substituem checkboxes crus.
+- Presets: Safe Default, Strict Release, Advisory Mode e Experimental Detection.
+- Seções Restore e History aparecem na configuração guiada.
+- Save Config valida, cria backup e registra histórico.
+
+O core continua rodando com `--project`:
+
+```bash
+node bin/guardian.js console --project /path/to/mule-tlf-com-test
+```

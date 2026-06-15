@@ -8,7 +8,10 @@ let state = {
   selectedApproval: null,
   filter: 'all',
   history: [],
-  historySummary: null
+  historySummary: null,
+  schema: null,
+  defaults: null,
+  lastValidation: null
 };
 
 const FILE_MODE = window.location.protocol === 'file:';
@@ -58,84 +61,155 @@ function pathSet(obj, path, value) {
   cur[parts[0]] = value;
 }
 
-function field(label, path, type = 'text') {
+function renderHelp(item) {
+  const parts = [];
+  if (item.description) parts.push(`<div class="field-help">${esc(item.description)}</div>`);
+  if (item.help) parts.push(`<div class="field-impact">${esc(item.help)}</div>`);
+  if (item.impact) parts.push(`<div class="field-impact"><strong>Impacto:</strong> ${esc(item.impact)}</div>`);
+  if (item.default !== undefined) parts.push(`<div class="field-default">Recomendado: <code>${esc(item.default)}</code></div>`);
+  return parts.join('');
+}
+
+function normalizeOptions(options = []) {
+  return options.map((o) => typeof o === 'object' ? o : { value: o, label: o, help: '' });
+}
+
+function configField(item) {
+  const value = pathGet(state.config, item.path);
+  const label = `<div class="field-label"><span>${esc(item.label)}</span>${item.severity ? `<em>${esc(item.severity)}</em>` : ''}</div>`;
+  let control = '';
+  if (item.type === 'boolean') {
+    const checked = Boolean(value);
+    control = `<label class="toggle-row"><input type="checkbox" data-path="${esc(item.path)}" data-type="boolean" ${checked ? 'checked' : ''}><span class="toggle-ui"></span><strong>${checked ? 'Enabled' : 'Disabled'}</strong></label>`;
+  } else if (item.type === 'select') {
+    const opts = normalizeOptions(item.options).map(o => `<option value="${esc(o.value)}" ${String(value) === String(o.value) ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+    const optionHelp = normalizeOptions(item.options).filter(o => o.help).map(o => `<li><strong>${esc(o.value)}:</strong> ${esc(o.help)}</li>`).join('');
+    control = `<select data-path="${esc(item.path)}" data-type="select">${opts}</select>${optionHelp ? `<ul class="option-help">${optionHelp}</ul>` : ''}`;
+  } else if (item.type === 'number') {
+    control = `<input type="number" data-path="${esc(item.path)}" data-type="number" min="${esc(item.min ?? '')}" max="${esc(item.max ?? '')}" step="${esc(item.step || 1)}" value="${esc(value ?? item.default ?? '')}" placeholder="${esc(item.placeholder || item.default || '')}">`;
+  } else if (item.type === 'textarea') {
+    control = `<textarea data-path="${esc(item.path)}" data-type="text" rows="3" placeholder="${esc(item.placeholder || '')}">${esc(value ?? item.default ?? '')}</textarea>`;
+  } else {
+    control = `<input data-path="${esc(item.path)}" data-type="text" value="${esc(value ?? item.default ?? '')}" placeholder="${esc(item.placeholder || item.default || '')}">`;
+  }
+  return `<div class="config-field" data-field="${esc(item.path)}">${label}${control}${renderHelp(item)}<button type="button" class="link-btn reset-field" data-reset-field="${esc(item.path)}">Reset default</button></div>`;
+}
+
+function schemaFields(groupId) {
+  return (state.schema?.fields || []).filter(f => f.group === groupId).sort((a,b)=>(a.order||0)-(b.order||0));
+}
+
+function schemaGroup(groupId) {
+  return (state.schema?.groups || []).find(g => g.id === groupId) || { id: groupId, title: groupId, description: '' };
+}
+
+function sectionBlock(groupId) {
+  const group = schemaGroup(groupId);
+  const fields = schemaFields(groupId);
+  if (!fields.length) return '';
+  return `<div class="config-section" data-config-section="${esc(groupId)}"><div class="config-section-head"><div><span class="config-icon">${esc(group.icon || '▣')}</span><h3>${esc(group.title)}</h3><p>${esc(group.description || '')}</p></div><button class="btn ghost small" data-reset-section="${esc(groupId)}">Reset seção</button></div><div class="config-grid">${fields.map(configField).join('')}</div></div>`;
+}
+
+function fallbackField(label, path, type = 'text') {
   const value = pathGet(state.config, path);
-  if (type === 'checkbox') return `<label>${esc(label)}<input type="checkbox" data-path="${esc(path)}" ${value ? 'checked' : ''}></label>`;
+  if (type === 'checkbox') return `<label>${esc(label)}<input type="checkbox" data-path="${esc(path)}" data-type="boolean" ${value ? 'checked' : ''}></label>`;
   return `<label>${esc(label)}<input data-path="${esc(path)}" value="${esc(value)}"></label>`;
 }
 
 function bindInputs() {
   document.querySelectorAll('[data-path]').forEach(input => {
     input.addEventListener('change', () => {
-      let value = input.type === 'checkbox' ? input.checked : input.value;
-      if (input.dataset.number === 'true') value = Number(value);
+      let value;
+      if (input.dataset.type === 'boolean' || input.type === 'checkbox') value = input.checked;
+      else if (input.dataset.type === 'number' || input.dataset.number === 'true') value = Number(input.value);
+      else value = input.value;
       pathSet(state.config, input.dataset.path, value);
       renderDashboard();
+      updateConfigImpact();
     });
   });
+  document.querySelectorAll('[data-reset-field]').forEach(btn => btn.onclick = () => resetField(btn.dataset.resetField));
+  document.querySelectorAll('[data-reset-section]').forEach(btn => btn.onclick = () => resetSection(btn.dataset.resetSection));
+  document.querySelectorAll('[data-preset]').forEach(btn => btn.onclick = () => applyPreset(btn.dataset.preset));
 }
 
 function renderForms() {
-  $('projectForm').innerHTML = [
-    field('Nome técnico', 'project.name'),
-    field('Nome visual', 'project.displayName'),
-    field('Tipo', 'project.type'),
-    field('RAML principal', 'project.mainFile'),
-    field('Owner', 'project.owner'),
-    field('Descrição', 'project.description')
-  ].join('');
-
-  $('exchangeForm').innerHTML = [
-    field('Exchange habilitado', 'exchange.enabled', 'checkbox'),
-    field('Asset ID', 'exchange.assetId'),
-    field('Asset Name', 'exchange.assetName'),
-    field('Descrição', 'exchange.assetDescription'),
-    field('Classifier', 'exchange.classifier'),
-    field('Main File', 'exchange.mainFile'),
-    field('API Version', 'exchange.apiVersion'),
-    field('Auto bump habilitado', 'exchange.autoBump.enabled', 'checkbox'),
-    numberField('Max 409 retries', 'exchange.autoBump.max409Retries'),
-    numberField('Retry 429', 'exchange.autoBump.retry429MaxAttempts'),
-    numberField('Retry 5xx', 'exchange.autoBump.retry5xxMaxAttempts'),
-    numberField('Backoff seconds', 'exchange.autoBump.backoffSeconds')
-  ].join('');
-
-  $('versioningForm').innerHTML = [
-    field('Minor line', 'versioning.minorLine'),
-    field('Initial version', 'versioning.initialVersion'),
-    field('Strategy', 'versioning.strategy'),
-    field('Stability default', 'versioning.stability.default'),
-    field('feature/*', 'versioning.branchRules.feature/*'),
-    field('develop', 'versioning.branchRules.develop'),
-    field('release/next', 'versioning.branchRules.release/next'),
-    field('release/current', 'versioning.branchRules.release/current'),
-    field('main', 'versioning.branchRules.main'),
-    field('master', 'versioning.branchRules.master')
-  ].join('');
-
-  $('contractForm').innerHTML = [
-    field('Contract Guard habilitado', 'contractGuard.enabled', 'checkbox'),
-    field('Baseline mode', 'contractGuard.baselineMode'),
-    field('Detectar possible replacements', 'contractGuard.changeDetection.detectPossibleReplacements', 'checkbox'),
-    numberField('Similarity threshold', 'contractGuard.changeDetection.similarityThreshold'),
-    numberField('Strong similarity threshold', 'contractGuard.changeDetection.strongSimilarityThreshold'),
-    field('Bloquear endpoint removido', 'contractGuard.blockRemovedEndpoints', 'checkbox'),
-    field('Bloquear método removido', 'contractGuard.blockRemovedMethods', 'checkbox'),
-    field('Bloquear query param obrigatório removido', 'contractGuard.blockRemovedRequiredQueryParams', 'checkbox'),
-    field('Bloquear URI param removido', 'contractGuard.blockRemovedUriParams', 'checkbox'),
-    field('Bloquear response sucesso removida', 'contractGuard.blockRemovedSuccessResponses', 'checkbox'),
-    field('Bloquear security removida', 'contractGuard.blockRemovedSecurity', 'checkbox'),
-    field('Bloquear trait removida', 'contractGuard.blockRemovedTraits', 'checkbox'),
-    field('Permitir breaking change aprovada', 'contractGuard.allowApprovedBreakingChanges', 'checkbox')
-  ].join('');
+  if (!state.schema) {
+    $('projectForm').innerHTML = [fallbackField('Nome técnico', 'project.name'), fallbackField('RAML principal', 'project.mainFile')].join('');
+    $('exchangeForm').innerHTML = [fallbackField('Asset ID', 'exchange.assetId'), fallbackField('Classifier', 'exchange.classifier')].join('');
+    $('versioningForm').innerHTML = [fallbackField('Minor line', 'versioning.minorLine'), fallbackField('Strategy', 'versioning.strategy')].join('');
+    $('contractForm').innerHTML = [fallbackField('Contract Guard habilitado', 'contractGuard.enabled', 'checkbox')].join('');
+  } else {
+    $('projectForm').innerHTML = sectionBlock('project');
+    $('exchangeForm').innerHTML = sectionBlock('exchange');
+    $('versioningForm').innerHTML = sectionBlock('versioning');
+    $('contractForm').innerHTML = `
+      <div class="config-intro">
+        <h3>Proteção guiada de contrato</h3>
+        <p>O Contract Guard compara o RAML atual com o baseline aprovado e, quando disponível, com a branch base/commit anterior. Mudanças que podem quebrar consumidores ficam bloqueadas até existir aprovação explícita.</p>
+        <div class="explain-cards">
+          <div><strong>Stable Baseline Guard</strong><span>Fonte oficial do contrato aprovado.</span></div>
+          <div><strong>Git Diff Guard</strong><span>Mostra onde a mudança aconteceu.</span></div>
+          <div><strong>Possible Replacement</strong><span>Detecta REMOVED + NEW parecido.</span></div>
+          <div><strong>Breaking Approval</strong><span>Registra ticket, responsável e motivo.</span></div>
+        </div>
+      </div>
+      <div class="preset-bar">
+        <button class="btn primary small" data-preset="safeDefault">Apply Safe Defaults</button>
+        <button class="btn small" data-preset="strictRelease">Apply Strict Release</button>
+        <button class="btn small" data-preset="advisoryMode">Apply Advisory Mode</button>
+        <button class="btn small" data-preset="experimentalDetection">Apply Experimental Detection</button>
+      </div>
+      ${sectionBlock('guard-mode')}
+      ${sectionBlock('change-detection')}
+      ${sectionBlock('blocking-rules')}
+      ${sectionBlock('default-decisions')}
+      ${sectionBlock('similarity-weights')}
+      <div class="config-summary" id="weightSummary"></div>
+      ${sectionBlock('restore')}
+      ${sectionBlock('history')}
+      ${sectionBlock('reports')}
+    `;
+  }
 
   const secrets = pathGet(state.config, 'security.requiredSecrets') || [];
   $('secretList').innerHTML = secrets.map(s => `<div class="secret">${esc(s)}</div>`).join('') || '<p class="muted">Nenhum secret configurado.</p>';
   bindInputs();
+  updateConfigImpact();
+}
+
+function updateConfigImpact() {
+  const cd = pathGet(state.config, 'contractGuard.changeDetection') || {};
+  const total = ['sameMethodWeight','pathSimilarityWeight','sameFirstSegmentWeight','sameVersionWeight','uriParamsSimilarityWeight','queryParamsSimilarityWeight','responsesSimilarityWeight'].reduce((acc,k)=>acc+Number(cd[k] || 0),0);
+  if ($('weightSummary')) {
+    $('weightSummary').innerHTML = `<strong>Peso total atual:</strong> ${esc(total)} <span>O algoritmo normaliza o score. A soma não precisa ser 100.</span>`;
+  }
 }
 
 function numberField(label, path) {
-  return `<label>${esc(label)}<input data-path="${esc(path)}" data-number="true" value="${esc(pathGet(state.config, path))}"></label>`;
+  return `<label>${esc(label)}<input data-path="${esc(path)}" data-type="number" data-number="true" value="${esc(pathGet(state.config, path))}"></label>`;
+}
+
+function resetField(path) {
+  const item = (state.schema?.fields || []).find(f => f.path === path);
+  if (!item) return;
+  pathSet(state.config, path, item.default);
+  renderForms(); renderDashboard();
+  msg(`Campo restaurado para default: ${item.label}`);
+}
+
+function resetSection(groupId) {
+  schemaFields(groupId).forEach(item => pathSet(state.config, item.path, item.default));
+  renderForms(); renderDashboard();
+  msg(`Seção restaurada para defaults: ${schemaGroup(groupId).title}`);
+}
+
+function applyPreset(name) {
+  const preset = state.schema?.presets?.[name];
+  if (!preset) return;
+  Object.entries(preset.values || {}).forEach(([path, value]) => pathSet(state.config, path, value));
+  renderForms(); renderDashboard();
+  msg(`Preset aplicado: ${preset.label}`);
 }
 
 function badge(value, label = value) {
@@ -404,6 +478,9 @@ function clearModal() {
 }
 
 async function loadAll() {
+  const schemaPayload = await api('/api/config/schema');
+  state.schema = schemaPayload.schema;
+  state.defaults = schemaPayload.defaults;
   const cfg = await api('/api/config');
   state.config = cfg.config;
   state.runtime = cfg.runtime || {};
@@ -445,7 +522,7 @@ function bindUi() {
   $('refreshAll').onclick = loadAll;
   $('refreshEndpoints').onclick = loadAll;
   if ($('refreshHistory')) $('refreshHistory').onclick = loadAll;
-  $('validateConfig').onclick = async () => { const v = await api('/api/config/validate', { method:'POST', body: JSON.stringify({ config: state.config }) }); msg(v.valid ? 'Config válida.' : v.errors.join(' | '), !v.valid); };
+  $('validateConfig').onclick = async () => { const v = await api('/api/config/validate', { method:'POST', body: JSON.stringify({ config: state.config }) }); state.lastValidation = v; msg(v.valid ? ((v.warnings && v.warnings.length) ? 'Config válida com warnings: ' + v.warnings.join(' | ') : 'Configuração válida.') : v.errors.join(' | '), !v.valid); };
   $('saveConfig').onclick = saveConfig;
   $('saveBreaking').onclick = saveBreaking;
   $('confirmApproval').onclick = () => confirmApproval().catch(e => msg(e.message, true));

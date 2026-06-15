@@ -1,8 +1,8 @@
 {
   "name": "release-flow-guardian-core",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": false,
-  "description": "Reusable Release Flow Guardian Core with responsive console, Contract Guard intelligence, audit history and remote project support.",
+  "description": "Reusable Release Flow Guardian Core with guided responsive configuration console, Contract Guard intelligence, audit history and remote project support.",
   "main": "bin/guardian.js",
   "bin": {
     "release-flow-guardian": "bin/guardian.js",

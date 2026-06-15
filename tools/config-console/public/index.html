@@ -54,9 +54,9 @@
           <div class="runtime-strip" id="runtimeInfo"></div>
         </div>
         <div class="hero-actions">
-          <button id="refreshAll" class="btn primary">Atualizar tudo</button>
-          <button id="validateConfig" class="btn">Validate Config</button>
-          <button id="saveConfig" class="btn danger-outline">Salvar Config</button>
+          <button id="refreshAll" class="btn primary">Atualizar Inventário e Decisões</button>
+          <button id="validateConfig" class="btn">Validar Configuração</button>
+          <button id="saveConfig" class="btn danger-outline">Salvar Configuração</button>
         </div>
       </header>
 
@@ -80,27 +80,27 @@
       </section>
 
       <section id="project" class="view">
-        <div class="panel"><div class="panel-title"><h2>Projeto</h2><p>Identidade da interface consumidora.</p></div><div class="form-grid" id="projectForm"></div></div>
+        <div class="panel"><div class="panel-title"><h2>Projeto</h2><p>Identidade da interface consumidora.</p></div><div class="config-area" id="projectForm"></div></div>
       </section>
 
       <section id="exchange" class="view">
-        <div class="panel"><div class="panel-title"><h2>Exchange</h2><p>Publicação, auto bump e metadados do asset.</p></div><div class="form-grid" id="exchangeForm"></div></div>
+        <div class="panel"><div class="panel-title"><h2>Exchange</h2><p>Publicação, auto bump e metadados do asset.</p></div><div class="config-area" id="exchangeForm"></div></div>
       </section>
 
       <section id="versioning" class="view">
-        <div class="panel"><div class="panel-title"><h2>Versionamento e Stability</h2><p>Controle de release, branch rules e baseline stable-only.</p></div><div class="form-grid" id="versioningForm"></div></div>
+        <div class="panel"><div class="panel-title"><h2>Versionamento e Stability</h2><p>Controle de release, branch rules e baseline stable-only.</p></div><div class="config-area" id="versioningForm"></div></div>
         <div class="panel"><h3>Regra premium</h3><p class="muted">Se o asset não existe, publica a versão inicial. Se existe, pega a última versão da linha minor e aplica patch + 1. Apenas <strong>stable</strong> atualiza o baseline oficial.</p></div>
       </section>
 
       <section id="contract" class="view">
-        <div class="panel"><div class="panel-title"><h2>Contract Guard</h2><p>Configuração de bloqueio para mudanças de contrato.</p></div><div class="form-grid" id="contractForm"></div></div>
+        <div class="panel"><div class="panel-title"><h2>Contract Guard</h2><p>Protege o contrato RAML contra perdas acidentais de endpoints, métodos, parâmetros, responses, security e traits.</p></div><div id="contractForm" class="config-area"></div></div>
       </section>
 
       <section id="endpoints" class="view">
         <div class="panel">
           <div class="panel-head">
             <div><h2>Endpoint Inventory</h2><p class="muted">Current RAML x stable baseline, com inteligência para possible replacements.</p></div>
-            <button id="refreshEndpoints" class="btn primary">Refresh Endpoint Inventory</button>
+            <button id="refreshEndpoints" class="btn primary">Atualizar Inventário de Endpoints</button>
           </div>
           <div class="filters">
             <button class="filter active" data-filter="all">Todos</button>
