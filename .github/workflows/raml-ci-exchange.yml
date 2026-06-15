@@ -1,0 +1,169 @@
+name: Release Flow Guardian Core - RAML CI + Exchange Publish
+
+on:
+  workflow_call:
+    inputs:
+      config-path:
+        required: false
+        type: string
+        default: release/guardian.config.yml
+      guardian-ref:
+        required: false
+        type: string
+        default: main
+      publish-exchange:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      ANYPOINT_CONNECTED_APP_CLIENT_ID:
+        required: false
+      ANYPOINT_CONNECTED_APP_CLIENT_SECRET:
+        required: false
+      ANYPOINT_ORG:
+        required: false
+      ANYPOINT_HOST:
+        required: false
+      EXCHANGE_GROUP_ID:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exchange-publish-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate RAML, Manifest and Contract Guard
+    runs-on: ubuntu-latest
+    env:
+      GUARDIAN_CONFIG: ${{ inputs.config-path }}
+    steps:
+      - name: Checkout API repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Release Flow Guardian Core
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund "github:${{ github.repository_owner }}/release-flow-guardian-core#${{ inputs.guardian-ref }}"
+          npx release-flow-guardian deps:check
+
+      - name: Validate Guardian config
+        run: npx release-flow-guardian validate:config
+
+      - name: Validate release manifest
+        run: npx release-flow-guardian validate:release
+
+      - name: Validate RAML syntax
+        run: npx release-flow-guardian validate:raml
+
+      - name: Resolve version stability
+        run: npx release-flow-guardian stability:resolve
+
+      - name: Extract API contract
+        run: npx release-flow-guardian contract:extract
+
+      - name: API Contract Guard
+        run: npx release-flow-guardian contract:guard
+
+      - name: Build Exchange package
+        run: npx release-flow-guardian package:exchange
+
+      - name: Generate HTML report
+        if: always()
+        run: npx release-flow-guardian report:html
+
+      - name: Publish validation summary
+        if: always()
+        run: |
+          echo "## Release Flow Guardian" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f dist/release-flow-guardian-report.md ]; then
+            cat dist/release-flow-guardian-report.md >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f dist/api-contract-diff.md ]; then
+            cat dist/api-contract-diff.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Relatório não gerado." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-flow-guardian-${{ github.run_number }}
+          path: |
+            dist/*.zip
+            dist/*.md
+            dist/*.json
+            dist/*.html
+            dist/*.yml
+
+  publish-exchange:
+    name: Publish RAML to Anypoint Exchange
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ inputs.publish-exchange == true }}
+    env:
+      GUARDIAN_CONFIG: ${{ inputs.config-path }}
+      ANYPOINT_CONNECTED_APP_CLIENT_ID: ${{ secrets.ANYPOINT_CONNECTED_APP_CLIENT_ID }}
+      ANYPOINT_CONNECTED_APP_CLIENT_SECRET: ${{ secrets.ANYPOINT_CONNECTED_APP_CLIENT_SECRET }}
+      ANYPOINT_ORG: ${{ secrets.ANYPOINT_ORG }}
+      ANYPOINT_HOST: ${{ secrets.ANYPOINT_HOST }}
+      EXCHANGE_GROUP_ID: ${{ secrets.EXCHANGE_GROUP_ID }}
+    steps:
+      - name: Checkout API repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Release Flow Guardian Core
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund "github:${{ github.repository_owner }}/release-flow-guardian-core#${{ inputs.guardian-ref }}"
+          npx release-flow-guardian deps:check
+
+      - name: Install Anypoint CLI v4
+        run: |
+          npm install -g anypoint-cli-v4
+          anypoint-cli-v4 --version
+
+      - name: Validate all gates
+        run: npx release-flow-guardian validate
+
+      - name: Build Exchange package
+        run: npx release-flow-guardian package:exchange
+
+      - name: Generate pre-publish report
+        if: always()
+        run: npx release-flow-guardian report:html
+
+      - name: Publish to Exchange with auto bump
+        run: npx release-flow-guardian publish:exchange
+
+      - name: Generate final HTML report
+        if: always()
+        run: npx release-flow-guardian report:html
+
+      - name: Upload publish artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-flow-guardian-publish-${{ github.run_number }}
+          path: |
+            dist/*.zip
+            dist/*.md
+            dist/*.json
+            dist/*.html
+            dist/*.yml

@@ -1,0 +1,38 @@
+{
+  "name": "release-flow-guardian-core",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Reusable Release Flow Guardian Core for RAML APIs, Exchange publish, Contract Guard and local console.",
+  "main": "bin/guardian.js",
+  "bin": {
+    "release-flow-guardian": "bin/guardian.js",
+    "rfg": "bin/guardian.js"
+  },
+  "scripts": {
+    "deps:check": "node scripts/ensure-dependencies.js",
+    "validate:config": "node scripts/validate-guardian-config.js",
+    "validate:release": "node scripts/check-release-manifest.js",
+    "validate:raml": "node scripts/validate-raml.js api.raml",
+    "stability:resolve": "node scripts/resolve-stability.js",
+    "contract:extract": "node scripts/extract-raml-contract.js api.raml dist/api-contract-current.json",
+    "contract:guard": "node scripts/compare-api-contract.js api.raml",
+    "package:exchange": "node scripts/build-exchange-package.js",
+    "publish:exchange": "node scripts/exchange-publish-guardian.js",
+    "report:html": "node scripts/generate-html-report.js",
+    "config:ui": "node tools/config-console/server.js",
+    "validate": "node bin/guardian.js validate",
+    "preflight": "node bin/guardian.js preflight",
+    "ci:publish": "node bin/guardian.js ci:publish"
+  },
+  "dependencies": {
+    "raml-1-parser": "1.1.67",
+    "yaml": "2.4.5",
+    "express": "4.18.3",
+    "diff": "5.2.0",
+    "minimatch": "9.0.5",
+    "archiver": "6.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

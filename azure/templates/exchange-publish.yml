@@ -1,0 +1,45 @@
+parameters:
+  configPath: 'release/guardian.config.yml'
+  guardianRef: 'main'
+  guardianRepository: 'github:LeonelIntegrationXpert/release-flow-guardian-core'
+  publishExchange: false
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+    displayName: Setup Node.js
+
+  - script: |
+      npm install --no-save --package-lock=false --no-audit --no-fund "${{ parameters.guardianRepository }}#${{ parameters.guardianRef }}"
+      npm install -g anypoint-cli-v4
+      npx release-flow-guardian deps:check
+    displayName: Install Guardian and Anypoint CLI
+
+  - script: |
+      npx release-flow-guardian validate
+      npx release-flow-guardian package:exchange
+      npx release-flow-guardian report:html
+    displayName: Guardian preflight
+    env:
+      GUARDIAN_CONFIG: ${{ parameters.configPath }}
+
+  - script: |
+      npx release-flow-guardian publish:exchange
+      npx release-flow-guardian report:html
+    displayName: Publish to Exchange
+    condition: and(succeeded(), eq('${{ parameters.publishExchange }}', 'true'))
+    env:
+      GUARDIAN_CONFIG: ${{ parameters.configPath }}
+      ANYPOINT_CONNECTED_APP_CLIENT_ID: $(ANYPOINT_CONNECTED_APP_CLIENT_ID)
+      ANYPOINT_CONNECTED_APP_CLIENT_SECRET: $(ANYPOINT_CONNECTED_APP_CLIENT_SECRET)
+      ANYPOINT_ORG: $(ANYPOINT_ORG)
+      ANYPOINT_HOST: $(ANYPOINT_HOST)
+      EXCHANGE_GROUP_ID: $(EXCHANGE_GROUP_ID)
+
+  - publish: dist
+    artifact: release-flow-guardian-publish
+    condition: always()

@@ -1,0 +1,35 @@
+parameters:
+  configPath: 'release/guardian.config.yml'
+  guardianRef: 'main'
+  guardianRepository: 'github:LeonelIntegrationXpert/release-flow-guardian-core'
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+    displayName: Setup Node.js
+
+  - script: |
+      npm install --no-save --package-lock=false --no-audit --no-fund "${{ parameters.guardianRepository }}#${{ parameters.guardianRef }}"
+      npx release-flow-guardian deps:check
+    displayName: Install Release Flow Guardian Core
+
+  - script: |
+      npx release-flow-guardian validate:config
+      npx release-flow-guardian validate:release
+      npx release-flow-guardian validate:raml
+      npx release-flow-guardian stability:resolve
+      npx release-flow-guardian contract:extract
+      npx release-flow-guardian contract:guard
+      npx release-flow-guardian package:exchange
+      npx release-flow-guardian report:html
+    displayName: Run Guardian validation
+    env:
+      GUARDIAN_CONFIG: ${{ parameters.configPath }}
+
+  - publish: dist
+    artifact: release-flow-guardian-report
+    condition: always()
