@@ -71,6 +71,9 @@ jobs:
       - name: Extract API contract
         run: npx release-flow-guardian contract:extract
 
+      - name: Extract Git base contract
+        run: npx release-flow-guardian contract:extract:git-base
+
       - name: API Contract Guard
         run: npx release-flow-guardian contract:guard
 

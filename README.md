@@ -1,34 +1,22 @@
 # Release Flow Guardian Core
 
-Motor global reutilizável para governança de APIs RAML/Design Center.
+Motor global reutilizável para governança de APIs RAML, publicação no Anypoint Exchange, Contract Guard, auto bump de versão e report HTML.
 
-Ele centraliza:
+## Uso local em uma interface
 
-- Validação RAML
-- Release manifest validation
-- API Contract Guard
-- Endpoint removal approval
-- Exchange Auto Bump
-- HTML/JSON/Markdown report
-- Console local de configuração
-- GitHub reusable workflow
-- Azure DevOps templates
-
-## Instalação local em uma interface
-
-Dentro do repositório da interface RAML:
+No repositório da interface RAML:
 
 ```bash
-npm install --save-dev ../release-flow-guardian-core
+npm install --save-dev github:LeonelIntegrationXpert/release-flow-guardian-core#main --package-lock=false
 npx release-flow-guardian validate
 npx release-flow-guardian preflight
 npx release-flow-guardian console
 ```
 
-Depois que este core estiver no GitHub:
+Console local:
 
-```bash
-npm install --save-dev github:LeonelIntegrationXpert/release-flow-guardian-core#main
+```text
+http://127.0.0.1:3030
 ```
 
 ## Comandos
@@ -40,6 +28,7 @@ npx release-flow-guardian validate:release
 npx release-flow-guardian validate:raml
 npx release-flow-guardian stability:resolve
 npx release-flow-guardian contract:extract
+npx release-flow-guardian contract:extract:git-base
 npx release-flow-guardian contract:guard
 npx release-flow-guardian package:exchange
 npx release-flow-guardian publish:exchange
@@ -50,43 +39,29 @@ npx release-flow-guardian ci:publish
 npx release-flow-guardian console
 ```
 
-## O que fica no repositório da interface
+## Proteção de endpoints
 
-Cada interface RAML mantém apenas os arquivos específicos:
+O Guardian compara o contrato atual contra:
 
-```text
-api.raml
-examples/
-types/
-traits/
-securitySchemes/
-release/guardian.config.yml
-release/release-manifest.yml
-release/api-contract-baseline.json
-release/breaking-changes.yml
-```
+1. `release/api-contract-baseline.json` — contrato oficial stable.
+2. Git base — branch base do PR ou `HEAD~1`.
 
-## GitHub Actions reutilizável
+Se endpoint/método/parâmetro crítico sumir sem aprovação em `release/breaking-changes.yml`, a pipeline bloqueia.
 
-No repositório da interface:
+## GitHub reusable workflow
+
+Em cada interface, crie um workflow chamando:
 
 ```yaml
-jobs:
-  guardian:
-    uses: LeonelIntegrationXpert/release-flow-guardian-core/.github/workflows/raml-ci-exchange.yml@main
-    with:
-      config-path: release/guardian.config.yml
-      publish-exchange: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
-    secrets:
-      ANYPOINT_CONNECTED_APP_CLIENT_ID: ${{ secrets.ANYPOINT_CONNECTED_APP_CLIENT_ID }}
-      ANYPOINT_CONNECTED_APP_CLIENT_SECRET: ${{ secrets.ANYPOINT_CONNECTED_APP_CLIENT_SECRET }}
-      ANYPOINT_ORG: ${{ secrets.ANYPOINT_ORG }}
-      ANYPOINT_HOST: ${{ secrets.ANYPOINT_HOST }}
-      EXCHANGE_GROUP_ID: ${{ secrets.EXCHANGE_GROUP_ID }}
+uses: LeonelIntegrationXpert/release-flow-guardian-core/.github/workflows/raml-ci-exchange.yml@main
 ```
 
-## Regra principal
+## Secrets necessários para publish Exchange
 
-Código fonte fica em cada interface.
-A inteligência de validação fica no Guardian Core.
+- `ANYPOINT_CONNECTED_APP_CLIENT_ID`
+- `ANYPOINT_CONNECTED_APP_CLIENT_SECRET`
+- `ANYPOINT_ORG`
+- `ANYPOINT_HOST`
+- `EXCHANGE_GROUP_ID`
 
+Nenhum secret deve ser salvo no repositório.

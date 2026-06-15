@@ -1,6 +1,6 @@
 {
   "name": "release-flow-guardian-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "description": "Reusable Release Flow Guardian Core for RAML APIs, Exchange publish, Contract Guard and local console.",
   "main": "bin/guardian.js",
@@ -22,7 +22,8 @@
     "config:ui": "node tools/config-console/server.js",
     "validate": "node bin/guardian.js validate",
     "preflight": "node bin/guardian.js preflight",
-    "ci:publish": "node bin/guardian.js ci:publish"
+    "ci:publish": "node bin/guardian.js ci:publish",
+    "contract:extract:git-base": "node scripts/extract-git-base-contract.js"
   },
   "dependencies": {
     "raml-1-parser": "1.1.67",

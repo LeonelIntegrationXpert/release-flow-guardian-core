@@ -23,6 +23,8 @@ steps:
       npx release-flow-guardian validate:raml
       npx release-flow-guardian stability:resolve
       npx release-flow-guardian contract:extract
+      release-flow-guardian contract:extract:git-base
+      npx release-flow-guardian contract:extract:git-base
       npx release-flow-guardian contract:guard
       npx release-flow-guardian package:exchange
       npx release-flow-guardian report:html
