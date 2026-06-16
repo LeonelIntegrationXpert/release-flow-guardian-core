@@ -110,9 +110,13 @@ const DEFAULT_CONFIG = {
     createBackupBeforeRestore: true,
     backupDir: 'release/backups',
     allowRestoreEndpointPath: true,
+    allowRestoreEndpointBlock: true,
     allowRestoreMethod: false,
     allowRestoreParams: true,
-    allowRestoreResponses: true
+    allowRestoreResponses: true,
+    runValidationAfterRestore: true,
+    runContractGuardAfterRestore: true,
+    revokeApprovalAfterRestoreDefault: true
   },
   reports: {
     enabled: true,
@@ -286,9 +290,13 @@ const CONFIG_UI_SCHEMA = {
     field('restore.createBackupBeforeRestore', 'Backup antes do restore', 'boolean', 'restore', { default: true, description: 'Cria backup antes de alterar RAML.' }),
     field('restore.backupDir', 'Diretório de backup', 'text', 'restore', { default: 'release/backups', description: 'Pasta onde backups serão salvos.' }),
     field('restore.allowRestoreEndpointPath', 'Restaurar path', 'boolean', 'restore', { default: true, description: 'Permite restaurar path do endpoint.' }),
+    field('restore.allowRestoreEndpointBlock', 'Restaurar bloco de endpoint', 'boolean', 'restore', { default: true, description: 'Permite restaurar bloco RAML completo a partir de release/baseline/api.raml.' }),
     field('restore.allowRestoreMethod', 'Restaurar método', 'boolean', 'restore', { default: false, description: 'Permite restaurar método HTTP.' }),
     field('restore.allowRestoreParams', 'Restaurar params', 'boolean', 'restore', { default: true, description: 'Permite restaurar parâmetros.' }),
     field('restore.allowRestoreResponses', 'Restaurar responses', 'boolean', 'restore', { default: true, description: 'Permite restaurar responses.' }),
+    field('restore.runValidationAfterRestore', 'Validar após restore', 'boolean', 'restore', { default: true, description: 'Roda extração/validação de contrato depois do restore.' }),
+    field('restore.runContractGuardAfterRestore', 'Rodar Contract Guard após restore', 'boolean', 'restore', { default: true, description: 'Recalcula a decisão após restaurar.' }),
+    field('restore.revokeApprovalAfterRestoreDefault', 'Revogar approval após restore', 'boolean', 'restore', { default: true, description: 'Sugere revogar approval relacionado quando o contrato é restaurado.' }),
 
     field('history.enabled', 'Histórico habilitado', 'boolean', 'history', { default: true, description: 'Registra trilha auditável de contrato.' }),
     field('history.file', 'Arquivo de histórico', 'text', 'history', { default: DEFAULT_CONFIG.history.file, description: 'Arquivo JSONL de auditoria.' }),

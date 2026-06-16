@@ -21,6 +21,13 @@ const {
   readHistory,
   getHistorySummary
 } = require('../../scripts/guardian-history');
+const {
+  replacePath,
+  insertEndpointBlock,
+  extractPathBlock,
+  makeUnifiedDiff,
+  createBackup
+} = require('../../lib/raml/raml-block-extractor');
 
 const CORE_ROOT = process.env.GUARDIAN_CORE_ROOT || CORE_DIR || path.resolve(__dirname, '..', '..');
 
@@ -33,6 +40,8 @@ const BREAKING_CHANGES_FILE = resolveProjectPath('release/breaking-changes.yml')
 const BASELINE_FILE = resolveProjectPath('release/api-contract-baseline.json');
 const CURRENT_CONTRACT_FILE = resolveProjectPath('dist/api-contract-current.json');
 const DIFF_FILE = resolveProjectPath('dist/api-contract-diff.json');
+const API_RAML_FILE = resolveProjectPath('api.raml');
+const BASELINE_RAML_FILE = resolveProjectPath('release/baseline/api.raml');
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -357,6 +366,84 @@ function revokeBreakingApproval(input) {
   return data;
 }
 
+
+function readTextFile(file, fallback = '') {
+  if (!fs.existsSync(file)) return fallback;
+  return fs.readFileSync(file, 'utf8');
+}
+
+function writeTextFile(file, content) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content, 'utf8');
+}
+
+function restoreConfig() {
+  const cfg = loadConfig();
+  const restore = cfg.restore || {};
+  return {
+    enabled: restore.enabled !== false,
+    confirmationText: restore.confirmationText || 'CONFIRMO RESTAURAR CONTRATO',
+    requireConfirmation: restore.requireConfirmation !== false,
+    createBackupBeforeRestore: restore.createBackupBeforeRestore !== false,
+    backupDir: resolveProjectPath(restore.backupDir || 'release/backups'),
+    allowRestoreEndpointPath: restore.allowRestoreEndpointPath !== false,
+    allowRestoreEndpointBlock: restore.allowRestoreEndpointBlock !== false,
+    runValidationAfterRestore: restore.runValidationAfterRestore !== false,
+    runContractGuardAfterRestore: restore.runContractGuardAfterRestore !== false,
+    revokeApprovalAfterRestoreDefault: restore.revokeApprovalAfterRestoreDefault !== false
+  };
+}
+
+function responseFromRestorePreview(payload) {
+  const body = payload || {};
+  const type = body.restoreType || body.type || 'path-restore';
+  const currentRaml = readTextFile(API_RAML_FILE, '');
+  const baselineRaml = readTextFile(BASELINE_RAML_FILE, '');
+  if (!currentRaml) return { ok: false, error: 'api.raml não encontrado no projeto.' };
+
+  if (type === 'endpoint-block-restore') {
+    if (!baselineRaml) return { ok: false, error: 'Snapshot release/baseline/api.raml não existe. Restore completo exige baseline RAML.' };
+    const result = insertEndpointBlock(currentRaml, baselineRaml, body.oldPath || body.path || body.baselinePath);
+    return { ...result, restoreType: 'endpoint-block-restore', baselineAvailable: true, baselinePath: body.oldPath || body.path || body.baselinePath };
+  }
+
+  const currentPath = body.newPath || body.currentPath || body.path;
+  const baselinePath = body.oldPath || body.baselinePath;
+  if (!currentPath || !baselinePath) return { ok: false, error: 'Restore de path exige oldPath/baselinePath e newPath/currentPath.' };
+  const result = replacePath(currentRaml, currentPath, baselinePath);
+  return { ...result, restoreType: 'path-restore', method: body.oldMethod || body.method || '', baselinePath, currentPathBeforeRestore: currentPath, currentPathAfterRestore: baselinePath, similarityScore: body.similarityScore || 0 };
+}
+
+function runAfterRestoreValidation(options = {}) {
+  const results = {};
+  if (options.runExtract !== false) {
+    const extract = runNode('scripts/extract-raml-contract.js', ['api.raml', CURRENT_CONTRACT_FILE]);
+    results.extract = { status: extract.status, stdout: extract.stdout || '', stderr: extract.stderr || '' };
+  }
+  if (options.runGuard !== false) {
+    const guard = runNode('scripts/compare-api-contract.js', ['api.raml']);
+    results.contractGuard = { status: guard.status, stdout: guard.stdout || '', stderr: guard.stderr || '' };
+  }
+  return results;
+}
+
+function writeRestorePatch(diff) {
+  const dir = resolveProjectPath('dist/restore-patches');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `restore-api-raml-${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}.patch`);
+  fs.writeFileSync(file, diff || '', 'utf8');
+  return file;
+}
+
+function relatedApprovalPayload(body) {
+  return {
+    oldMethod: body.oldMethod || body.method || '',
+    oldPath: body.oldPath || body.baselinePath || body.path || '',
+    newMethod: body.newMethod || body.method || '',
+    newPath: body.newPath || body.currentPath || body.replacement || ''
+  };
+}
+
 async function handleApi(req, res, url) {
   try {
     if (req.method === 'GET' && url.pathname === '/api/config') {
@@ -456,6 +543,58 @@ async function handleApi(req, res, url) {
     }
     if (req.method === 'GET' && url.pathname === '/api/history/summary') {
       return json(res, 200, getHistorySummary());
+    }
+    if (req.method === 'GET' && url.pathname === '/api/raml/current') {
+      return json(res, 200, { exists: fs.existsSync(API_RAML_FILE), file: 'api.raml', content: readTextFile(API_RAML_FILE, '') });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/raml/baseline') {
+      return json(res, 200, { exists: fs.existsSync(BASELINE_RAML_FILE), file: 'release/baseline/api.raml', content: readTextFile(BASELINE_RAML_FILE, ''), message: fs.existsSync(BASELINE_RAML_FILE) ? '' : 'Snapshot RAML do baseline ainda não existe. O Guardian pode comparar contratos pelo JSON, mas o restore completo de bloco RAML exige um snapshot do RAML aprovado.' });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/raml/diff') {
+      const current = readTextFile(API_RAML_FILE, '');
+      const baseline = readTextFile(BASELINE_RAML_FILE, '');
+      return json(res, 200, { baselineAvailable: Boolean(baseline), diff: baseline ? makeUnifiedDiff(baseline, current, 'release/baseline/api.raml', 'api.raml') : 'Snapshot release/baseline/api.raml não existe. Diff RAML completo indisponível.' });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/restore/preview') {
+      const body = await readBody(req);
+      const preview = responseFromRestorePreview(body);
+      appendHistoryEvent({ source: 'guardian-console', eventType: 'RESTORE_PREVIEW_GENERATED', action: 'preview', changeType: preview.restoreType || body.restoreType || 'restore', severity: preview.ok ? 'INFO' : 'WARN', decision: preview.ok ? 'PREVIEW' : 'FAILED', oldMethod: body.oldMethod || body.method || '', oldPath: body.oldPath || body.baselinePath || '', newMethod: body.newMethod || body.method || '', newPath: body.newPath || body.currentPath || '', similarityScore: Number(body.similarityScore || 0), message: preview.error || preview.reason || '' }, { dedupe: false });
+      return json(res, preview.ok ? 200 : 400, preview);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/restore/generate-patch') {
+      const body = await readBody(req);
+      const preview = responseFromRestorePreview(body);
+      if (!preview.ok) return json(res, 400, preview);
+      const patchFile = writeRestorePatch(preview.diff);
+      appendHistoryEvent({ source: 'guardian-console', eventType: 'RESTORE_PATCH_GENERATED', action: 'generated', changeType: preview.restoreType, severity: 'INFO', decision: 'OK', file: patchFile, oldMethod: body.oldMethod || body.method || '', oldPath: body.oldPath || body.baselinePath || '', newMethod: body.newMethod || body.method || '', newPath: body.newPath || body.currentPath || '' }, { dedupe: false });
+      return json(res, 200, { generated: true, patchFile, diff: preview.diff });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/restore/apply') {
+      const body = await readBody(req);
+      const cfg = restoreConfig();
+      if (!cfg.enabled) return json(res, 400, { ok: false, error: 'Restore está desabilitado na configuração.' });
+      if (cfg.requireConfirmation && body.confirmationText !== cfg.confirmationText) return json(res, 400, { ok: false, error: `Confirmação inválida. Digite exatamente: ${cfg.confirmationText}` });
+      const preview = responseFromRestorePreview(body);
+      if (!preview.ok) return json(res, 400, preview);
+      let backup = null;
+      if (cfg.createBackupBeforeRestore) {
+        backup = createBackup(API_RAML_FILE, cfg.backupDir, { eventType: 'RESTORE_BACKUP_CREATED', restoreType: preview.restoreType, oldPath: body.oldPath || body.baselinePath, newPath: body.newPath || body.currentPath });
+        appendHistoryEvent({ source: 'guardian-console', eventType: 'RESTORE_BACKUP_CREATED', action: 'backup', changeType: preview.restoreType, severity: 'INFO', decision: 'OK', file: backup.backupFile, oldMethod: body.oldMethod || body.method || '', oldPath: body.oldPath || body.baselinePath || '', newMethod: body.newMethod || body.method || '', newPath: body.newPath || body.currentPath || '' }, { dedupe: false });
+      }
+      writeTextFile(API_RAML_FILE, preview.after);
+      let revoked = null;
+      if (body.revokeApproval) {
+        try { revoked = revokeBreakingApproval(relatedApprovalPayload(body)); } catch (error) { revoked = { error: error.message }; }
+      }
+      const validation = runAfterRestoreValidation({ runExtract: cfg.runValidationAfterRestore, runGuard: cfg.runContractGuardAfterRestore });
+      const eventType = preview.restoreType === 'endpoint-block-restore' ? 'ENDPOINT_BLOCK_RESTORED' : 'ENDPOINT_PATH_RESTORED';
+      appendHistoryEvent({ source: 'guardian-console', eventType, action: 'restored', changeType: preview.restoreType, severity: validation.contractGuard && validation.contractGuard.status !== 0 ? 'WARN' : 'INFO', decision: validation.contractGuard && validation.contractGuard.status !== 0 ? 'RESTORED_WITH_WARNINGS' : 'OK', method: body.oldMethod || body.method || '', baselinePath: body.oldPath || body.baselinePath || '', currentPathBeforeRestore: body.newPath || body.currentPath || '', currentPathAfterRestore: body.oldPath || body.baselinePath || '', oldMethod: body.oldMethod || body.method || '', oldPath: body.oldPath || body.baselinePath || '', newMethod: body.newMethod || body.method || '', newPath: body.newPath || body.currentPath || '', similarityScore: Number(body.similarityScore || 0), backupFile: backup?.backupFile || '', metadataFile: backup?.metadataFile || '' }, { dedupe: false });
+      if (body.revokeApproval) appendHistoryEvent({ source: 'guardian-console', eventType: 'BREAKING_CHANGE_REVOKED_AFTER_RESTORE', action: 'revoked', changeType: 'approval-after-restore', severity: 'INFO', decision: 'REVOKED', oldMethod: body.oldMethod || body.method || '', oldPath: body.oldPath || body.baselinePath || '', newMethod: body.newMethod || body.method || '', newPath: body.newPath || body.currentPath || '' }, { dedupe: false });
+      return json(res, 200, { ok: true, backup, revoked, validation, restoreType: preview.restoreType });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/restore/history') {
+      const events = readHistory(300).filter(e => String(e.eventType || '').includes('RESTORE') || String(e.eventType || '').includes('RESTORED'));
+      return json(res, 200, { events });
     }
     if (req.method === 'GET' && url.pathname === '/api/report/latest') {
       return json(res, 200, readJson(resolveProjectPath('dist/release-flow-guardian-report.json'), { status: 'NOT_FOUND' }));

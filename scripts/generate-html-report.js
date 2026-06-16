@@ -82,6 +82,11 @@ inventory.sort((a,b)=>a.id.localeCompare(b.id));
 const possibleReplacements = contractDiff.possibleReplacements || contractDiff.stableBaselineGuard?.possibleReplacements || [];
 const approvedBreakingChanges = contractDiff.approvedBreakingChanges || contractDiff.stableBaselineGuard?.approvedBreakingChanges || [];
 const blockedBreakingChanges = contractDiff.blockedBreakingChanges || contractDiff.stableBaselineGuard?.blockedBreakingChanges || [];
+const restoreEvents = historyEvents.filter(e => String(e.eventType || '').includes('RESTORE') || String(e.eventType || '').includes('RESTORED'));
+const restoreCandidates = [
+  ...possibleReplacements.map(p => ({ type: 'PATH_RESTORE', method: p.oldMethod || p.method || '', baselinePath: p.oldPath || p.path || '', currentPath: p.newPath || p.replacement || '', action: 'RESTORE_AVAILABLE', result: 'NOT_EXECUTED', similarityScore: p.similarityScore || 0 })),
+  ...inventory.filter(i => i.status === 'REMOVED').map(i => ({ type: 'ENDPOINT_BLOCK_RESTORE', method: i.endpoint.method || '', baselinePath: i.endpoint.path || '', currentPath: '', action: 'RESTORE_AVAILABLE', result: 'NOT_EXECUTED', similarityScore: '' }))
+];
 
 const summary = {
   context,
@@ -105,7 +110,8 @@ const summary = {
     possibleReplacements
   },
   exchange: exchangeReport,
-  history: { summary: historySummary, events: historyEvents.slice(-50) }
+  history: { summary: historySummary, events: historyEvents.slice(-50) },
+  restore: { candidates: restoreCandidates, events: restoreEvents.slice(-50), executed: restoreEvents.filter(e => String(e.eventType || '').includes('RESTORED')).length, failures: restoreEvents.filter(e => String(e.eventType || '').includes('FAILED')).length }
 };
 
 fs.writeFileSync(OUTPUT_JSON, JSON.stringify(summary, null, 2), 'utf8');
@@ -127,11 +133,14 @@ ${card('Possible replacements', possibleReplacements.length, possibleReplacement
 ${card('Aprovados', summary.endpointGovernance.totalApproved + approvedBreakingChanges.length, (summary.endpointGovernance.totalApproved + approvedBreakingChanges.length) ? 'WARNING' : 'OK', 'WARN + permite')}
 ${card('Exchange Version', exchangeReport?.resolvedVersion || 'N/A', exchangeReport?.status || 'INFO', exchangeReport?.latestVersionFound ? `Última: ${exchangeReport.latestVersionFound}` : 'Sem publish nesta execução')}
 ${card('Histórico', historySummary.total || 0, 'INFO', 'eventos auditáveis')}
+${card('Restore candidates', restoreCandidates.length, restoreCandidates.length ? 'WARNING' : 'OK', 'path/block restore')}
+${card('Restores executed', restoreEvents.filter(e => String(e.eventType || '').includes('RESTORED')).length, 'INFO', 'ações registradas')}
 </section>
 <section class="section"><h2>Endpoint Governance</h2><table><thead><tr><th>Status</th><th>Method</th><th>Path</th><th>Decision</th><th>Query Params</th><th>Responses</th></tr></thead><tbody>${rows(inventory, i => `<tr><td>${badge(i.status,i.status)}</td><td>${esc(i.endpoint.method)}</td><td class="mono">${esc(i.endpoint.path)}</td><td>${badge(i.decision,i.decision)}</td><td>${esc(Object.keys(i.endpoint.queryParameters||{}).join(', ') || '-')}</td><td>${esc(Object.keys(i.endpoint.responses||{}).join(', ') || '-')}</td></tr>`)}</tbody></table></section>
 <section class="section"><h2>Breaking Change Intelligence</h2><table><thead><tr><th>Type</th><th>Old endpoint</th><th>New endpoint</th><th>Similarity</th><th>Decision</th><th>Approval</th></tr></thead><tbody>${rows(possibleReplacements, p => `<tr><td>${badge(p.type || 'POSSIBLE_REPLACEMENT')}</td><td><strong>${esc(p.oldMethod)}</strong><br><span class="mono">${esc(p.oldPath)}</span></td><td><strong>${esc(p.newMethod)}</strong><br><span class="mono">${esc(p.newPath)}</span></td><td>${esc(p.similarityScore || 0)}%</td><td>${badge(p.decision || 'BLOCK')}</td><td>${badge(p.approvalStatus || 'NOT_APPROVED')}</td></tr>`, 6)}</tbody></table></section>
 <section class="section"><h2>Contract Guard Findings</h2><table><thead><tr><th>Severity</th><th>Rule</th><th>Message</th><th>Approval</th></tr></thead><tbody>${rows(findings, f => `<tr><td>${badge(f.severity,f.severity)}</td><td class="mono">${esc(f.ruleId)}</td><td>${esc(f.message)}</td><td>${f.details?.approval ? `${esc(f.details.approval.ticket)}<br>${esc(f.details.approval.reason)}` : '-'}</td></tr>`, 4)}</tbody></table></section>
 
+<section class="section"><h2>Restore Intelligence</h2><table><thead><tr><th>Type</th><th>Method</th><th>Baseline Path</th><th>Current Path</th><th>Action</th><th>Backup</th><th>Result</th><th>Created At</th></tr></thead><tbody>${rows(restoreCandidates, r => `<tr><td>${badge(r.type)}</td><td>${esc(r.method)}</td><td class="mono">${esc(r.baselinePath || '-')}</td><td class="mono">${esc(r.currentPath || '-')}</td><td>${badge(r.action || 'RESTORE_AVAILABLE')}</td><td>-</td><td>${badge(r.result || 'NOT_EXECUTED')}</td><td>-</td></tr>`, 8)}${restoreEvents.length ? rows(restoreEvents.slice(-20).reverse(), e => `<tr><td>${badge(e.eventType || 'RESTORE')}</td><td>${esc(e.method || e.oldMethod || '')}</td><td class="mono">${esc(e.baselinePath || e.oldPath || '')}</td><td class="mono">${esc(e.currentPathBeforeRestore || e.newPath || '')}</td><td>${badge(e.action || 'restored')}</td><td class="mono">${esc(e.backupFile || e.file || '-')}</td><td>${badge(e.decision || e.severity || 'INFO')}</td><td>${esc(e.createdAt || '')}</td></tr>`, 8) : ''}</tbody></table></section>
 <section class="section"><h2>Change History</h2><table><thead><tr><th>Data</th><th>Evento</th><th>Mudança</th><th>Decisão</th><th>Ticket</th><th>Ator</th><th>Git</th></tr></thead><tbody>${rows(historyEvents.slice(-30).reverse(), e => { const oldEp = e.oldPath ? `${e.oldMethod || ''} ${e.oldPath}`.trim() : ''; const newEp = e.newPath ? `${e.newMethod || ''} ${e.newPath}`.trim() : ''; const ep = e.path ? `${e.method || ''} ${e.path}`.trim() : ''; const change = oldEp || newEp ? `${esc(oldEp || '-')}<br>→ ${esc(newEp || '-')}` : esc(ep || e.message || e.changeType || '-'); return `<tr><td>${esc(e.createdAt || '')}</td><td>${badge(e.eventType || 'EVENT')}</td><td class="mono">${change}</td><td>${badge(e.decision || e.severity || 'INFO')}</td><td>${esc(e.ticket || '-')}<br>${esc(e.reason || '')}</td><td>${esc(e.actor?.name || '-')}<br>${esc(e.actor?.email || e.actor?.gitUserEmail || '')}</td><td>${esc(e.git?.branch || '-')}<br><span class="mono">${esc(e.git?.commitShort || '')}</span></td></tr>`; }, 7)}</tbody></table></section>
 <section class="section"><h2>Exchange</h2><table><tbody><tr><td>Asset ID</td><td class="mono">${esc(context.assetId)}</td></tr><tr><td>Minor line</td><td>${esc(config.versioning?.minorLine || '1.0')}</td></tr><tr><td>Initial version</td><td>${esc(config.versioning?.initialVersion || '1.0.0')}</td></tr><tr><td>Resolved version</td><td>${esc(exchangeReport?.resolvedVersion || 'N/A')}</td></tr><tr><td>Publish result</td><td>${badge(exchangeReport?.status || 'NOT_PUBLISHED')}</td></tr></tbody></table></section>
 <section class="section"><h2>Stability / Baseline</h2><table><tbody><tr><td>Branch</td><td>${esc(stability.branch)}</td></tr><tr><td>Matched rule</td><td>${esc(stability.matchedRule)}</td></tr><tr><td>Stability</td><td>${badge(stability.stability, stability.stability)}</td></tr><tr><td>Baseline update allowed</td><td>${stability.baselineUpdateAllowed ? badge('OK','YES') : badge('WARN','NO')}</td></tr></tbody></table></section>
@@ -161,6 +170,10 @@ const md = [
   '## Breaking Change Intelligence',
   '',
   ...(possibleReplacements.length ? possibleReplacements.map(p => `- [${p.decision || 'BLOCK'}] ${p.oldMethod} ${p.oldPath} -> ${p.newMethod} ${p.newPath} (${p.similarityScore || 0}%)`) : ['- Nenhum possible replacement.']),
+  '',
+  '## Restore Intelligence', '',
+  ...(restoreCandidates.length ? restoreCandidates.map(r => `- [${r.action}] ${r.type} ${r.method} ${r.baselinePath} -> ${r.currentPath || '(restore block)'}`) : ['- Nenhum candidato de restore.']),
+  ...(restoreEvents.length ? restoreEvents.slice(-10).reverse().map(e => `- [${e.eventType}] ${e.baselinePath || e.oldPath || ''} -> ${e.currentPathAfterRestore || e.currentPathBeforeRestore || e.newPath || ''} — ${e.decision || e.severity || 'INFO'}`) : []),
   '',
   '## Change History', '',
   ...(historyEvents.slice(-20).reverse().length ? historyEvents.slice(-20).reverse().map(e => `- [${e.eventType}] ${e.oldPath ? `${e.oldMethod || ''} ${e.oldPath} -> ${e.newMethod || ''} ${e.newPath || ''}` : (e.path ? `${e.method || ''} ${e.path}` : e.message || e.changeType || '')} — ${e.decision || e.severity || 'INFO'} — ${e.actor?.email || e.actor?.name || 'unknown'}`) : ['- Nenhum evento histórico.']),

@@ -125,3 +125,15 @@ O core continua rodando com `--project`:
 ```bash
 node bin/guardian.js console --project /path/to/mule-tlf-com-test
 ```
+
+## RAML Preview e Restore Assistant
+
+O Console agora possui as seções **RAML Preview** e **Restore Assistant**.
+
+- RAML Preview mostra `api.raml`, `release/baseline/api.raml` quando existir e diff RAML.
+- Restore Assistant permite restaurar alterações acidentais de contrato com preview, backup, confirmação forte e histórico.
+- Para `POSSIBLE_REPLACEMENT`, o restore de path troca o path novo pelo path antigo aprovado.
+- Para endpoint removido completo, o restore de bloco usa `release/baseline/api.raml` quando disponível.
+- Eventos de restore são registrados em `release/history/contract-change-history.jsonl`.
+
+O restore não aprova breaking change automaticamente. Aprovar e restaurar são fluxos separados.

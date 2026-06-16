@@ -26,6 +26,8 @@
       <button class="nav active" data-view="dashboard"><span>Dashboard</span><small>Status geral</small></button>
       <button class="nav" data-view="endpoints"><span>Endpoint Inventory</span><small>Contrato atual x baseline</small></button>
       <button class="nav" data-view="approvals"><span>Breaking Approval</span><small>Remoção, alteração e replacement</small></button>
+      <button class="nav" data-view="ramlPreview"><span>RAML Preview</span><small>Atual, baseline e diff</small></button>
+      <button class="nav" data-view="restoreAssistant"><span>Restore Assistant</span><small>Preview, backup e restore</small></button>
       <button class="nav" data-view="breaking"><span>Breaking Changes</span><small>Arquivo de aprovação</small></button>
       <button class="nav" data-view="history"><span>Change History</span><small>Auditoria de contrato</small></button>
 
@@ -138,6 +140,50 @@
       </section>
 
 
+
+      <section id="ramlPreview" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>RAML Preview</h2>
+              <p class="muted">Visualize o RAML atual, o snapshot baseline e o diff antes de aprovar ou restaurar contrato.</p>
+            </div>
+            <button id="refreshRamlPreview" class="btn primary">Atualizar RAML Preview</button>
+          </div>
+          <div class="raml-tabs">
+            <button class="raml-tab active" data-raml-tab="current">RAML Atual</button>
+            <button class="raml-tab" data-raml-tab="baseline">Baseline RAML</button>
+            <button class="raml-tab" data-raml-tab="diff">Diff RAML</button>
+            <button class="raml-tab" data-raml-tab="restore">Preview do Restore</button>
+          </div>
+          <div class="raml-tools">
+            <input id="ramlSearch" placeholder="Buscar path, método ou palavra no RAML..." />
+            <button id="copyRamlView" class="btn small">Copiar visão atual</button>
+          </div>
+          <pre id="ramlPreviewText" class="code-preview"></pre>
+        </div>
+      </section>
+
+      <section id="restoreAssistant" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Restore Assistant</h2>
+              <p class="muted">Restaure perdas acidentais de contrato com preview, backup, confirmação forte e histórico auditável.</p>
+            </div>
+            <button id="refreshRestore" class="btn primary">Atualizar candidatos</button>
+          </div>
+          <div class="cards compact" id="restoreCards"></div>
+          <div class="table-wrap"><table id="restoreTable"></table></div>
+          <div class="git-suggestion">
+            <h3>Git como apoio, não como ação cega</h3>
+            <p class="muted">Evite executar <code>git restore api.raml</code> sem revisar, porque isso pode descartar outras alterações legítimas. Prefira o restore por endpoint com preview e backup.</p>
+            <code>git diff api.raml</code><br />
+            <code>git restore api.raml</code>
+          </div>
+        </div>
+      </section>
+
       <section id="history" class="view">
         <div class="panel">
           <div class="panel-head">
@@ -185,6 +231,32 @@
       <div class="modal-actions">
         <button id="confirmApproval" class="btn primary">Salvar aprovação</button>
         <button id="cancelApproval" class="btn">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="restoreModal" class="modal hidden">
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <div>
+          <h2 id="restoreTitle">Restaurar contrato</h2>
+          <p class="muted" id="restoreTarget">Preview do restore.</p>
+        </div>
+        <button id="closeRestoreModal" class="icon-btn">×</button>
+      </div>
+      <div class="restore-summary" id="restoreSummary"></div>
+      <pre id="restoreDiff" class="code-preview diff-preview"></pre>
+      <label class="confirm-box">
+        <span>Digite a confirmação para habilitar o restore:</span>
+        <strong id="restoreConfirmationExpected">CONFIRMO RESTAURAR CONTRATO</strong>
+        <input id="restoreConfirmation" placeholder="CONFIRMO RESTAURAR CONTRATO" />
+      </label>
+      <label class="toggle-row restore-revoke"><input type="checkbox" id="restoreRevokeApproval" checked><span class="toggle-ui"></span><strong>Revogar aprovação relacionada após restore</strong></label>
+      <div class="modal-actions">
+        <button id="cancelRestore" class="btn">Cancelar</button>
+        <button id="generateRestorePatch" class="btn">Gerar Patch</button>
+        <button id="confirmRestore" class="btn primary" disabled>Confirmar Restore</button>
       </div>
     </div>
   </div>

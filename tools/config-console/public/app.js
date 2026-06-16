@@ -11,7 +11,9 @@ let state = {
   historySummary: null,
   schema: null,
   defaults: null,
-  lastValidation: null
+  lastValidation: null,
+  raml: { current: null, baseline: null, diff: null, activeTab: 'current' },
+  restore: { selected: null, preview: null, history: [] }
 };
 
 const FILE_MODE = window.location.protocol === 'file:';
@@ -344,23 +346,28 @@ function renderEndpoints() {
       related = `<div class="subline">${r.status === 'POSSIBLE_REPLACEMENT' ? 'Possível novo endpoint' : 'Relacionado ao removido'}: <code>${esc(r.status === 'POSSIBLE_REPLACEMENT' ? r.possible.newId : r.possible.oldId)}</code> • Similaridade ${esc(r.possible.similarityScore || 0)}%</div>`;
     }
     const action = r.status === 'REMOVED' || r.status === 'POSSIBLE_REPLACEMENT'
-      ? `<button class="btn small primary" data-approve-row="${esc(r.id)}">Aprovar</button>`
+      ? `<button class="btn small primary" data-approve-row="${esc(r.id)}">Aprovar</button>${r.status === 'POSSIBLE_REPLACEMENT' ? ` <button class="btn small" data-restore-row="${esc(r.id)}">Restaurar</button>` : ''}`
       : '-';
     return `<tr><td>${badge(r.status)}</td><td>${esc(r.method)}</td><td class="path-cell"><code>${esc(r.path)}</code>${related}</td><td>${getEndpointParams(e)}</td><td>${esc(res)}</td><td>${badge(r.decision)}</td><td>${action}</td></tr>`;
   }).join('') + '</tbody>';
 
   renderPossibleReplacements();
   renderApprovalTable();
+  renderRestoreAssistant();
   document.querySelectorAll('[data-approve-row]').forEach(btn => btn.onclick = () => openApprovalFromRow(btn.dataset.approveRow));
+  document.querySelectorAll('[data-restore-row]').forEach(btn => btn.onclick = () => openRestoreFromRow(btn.dataset.restoreRow));
 }
+
 
 function renderPossibleReplacements() {
   const possible = getPossibleReplacements();
   $('possibleTable').innerHTML = `<thead><tr><th>Old endpoint</th><th>New endpoint</th><th>Similarity</th><th>Decision</th><th>Approval</th><th>Ação</th></tr></thead><tbody>` + (possible.length ? possible.map((p, idx) => {
     const approved = approvedPossibleSet().has(approvalKeyPossible(p)) || p.approvalStatus === 'APPROVED';
-    return `<tr><td><strong>${esc(p.oldMethod)}</strong><br><code>${esc(p.oldPath)}</code></td><td><strong>${esc(p.newMethod)}</strong><br><code>${esc(p.newPath)}</code></td><td><div class="score"><span style="width:${Math.max(0, Math.min(100, Number(p.similarityScore || 0)))}%"></span></div><div class="subline">${esc(p.similarityScore || 0)}% • ${(p.similarityReasons || []).map(esc).join(', ')}</div></td><td>${badge(approved ? 'WARN' : 'BLOCK', approved ? 'WARN' : 'BLOCK')}</td><td>${badge(approved ? 'APPROVED' : 'NOT_APPROVED')}</td><td><button class="btn small primary" data-approve-possible="${idx}">Aprovar</button></td></tr>`;
+    return `<tr><td><strong>${esc(p.oldMethod)}</strong><br><code>${esc(p.oldPath)}</code></td><td><strong>${esc(p.newMethod)}</strong><br><code>${esc(p.newPath)}</code></td><td><div class="score"><span style="width:${Math.max(0, Math.min(100, Number(p.similarityScore || 0)))}%"></span></div><div class="subline">${esc(p.similarityScore || 0)}% • ${(p.similarityReasons || []).map(esc).join(', ')}</div></td><td>${badge(approved ? 'WARN' : 'BLOCK', approved ? 'WARN' : 'BLOCK')}</td><td>${badge(approved ? 'APPROVED' : 'NOT_APPROVED')}</td><td><button class="btn small primary" data-approve-possible="${idx}">Aprovar</button> <button class="btn small" data-restore-possible="${idx}">Restaurar</button> <button class="btn small ghost" data-diff-possible="${idx}">Ver diff</button></td></tr>`;
   }).join('') : '<tr><td colspan="6" class="muted">Nenhum possible replacement detectado.</td></tr>') + '</tbody>';
   document.querySelectorAll('[data-approve-possible]').forEach(btn => btn.onclick = () => openApprovalFromPossible(possible[Number(btn.dataset.approvePossible)]));
+  document.querySelectorAll('[data-restore-possible]').forEach(btn => btn.onclick = () => openRestoreFromPossible(possible[Number(btn.dataset.restorePossible)]));
+  document.querySelectorAll('[data-diff-possible]').forEach(btn => btn.onclick = () => showDiffForPossible(possible[Number(btn.dataset.diffPossible)]));
 }
 
 function renderApprovalTable() {
@@ -379,6 +386,149 @@ function renderApprovalTable() {
   document.querySelectorAll('[data-revoke]').forEach(btn => btn.onclick = () => revokeApproval(btn.dataset.revoke));
 }
 
+
+function getRestoreCandidates() {
+  const candidates = [];
+  for (const p of getPossibleReplacements()) {
+    candidates.push({
+      type: 'path-restore',
+      label: 'Restore Path from Baseline',
+      method: p.oldMethod || p.method || 'GET',
+      oldMethod: p.oldMethod || p.method || 'GET',
+      oldPath: p.oldPath || p.path,
+      newMethod: p.newMethod || p.method || 'GET',
+      newPath: p.newPath || p.replacement,
+      similarityScore: p.similarityScore || 0,
+      decision: p.decision || 'BLOCK',
+      approvalStatus: p.approvalStatus || (approvedPossibleSet().has(approvalKeyPossible(p)) ? 'APPROVED' : 'NOT_APPROVED'),
+      source: 'possible-replacement'
+    });
+  }
+  const removed = endpointRows().filter(r => r.status === 'REMOVED');
+  for (const r of removed) {
+    candidates.push({
+      type: 'endpoint-block-restore',
+      label: 'Restore Endpoint Block',
+      method: r.method,
+      oldMethod: r.method,
+      oldPath: r.path,
+      newMethod: r.method,
+      newPath: '',
+      decision: r.decision,
+      approvalStatus: r.decision.includes('APPROVED') ? 'APPROVED' : 'NOT_APPROVED',
+      source: 'removed-endpoint'
+    });
+  }
+  return candidates;
+}
+
+async function loadRamlPreview() {
+  try {
+    state.raml.current = await api('/api/raml/current');
+    state.raml.baseline = await api('/api/raml/baseline');
+    state.raml.diff = await api('/api/raml/diff');
+  } catch (error) {
+    msg(error.message, true);
+  }
+  renderRamlPreview();
+}
+
+function currentRamlViewText() {
+  const tab = state.raml.activeTab || 'current';
+  if (tab === 'current') return state.raml.current?.content || 'api.raml não carregado.';
+  if (tab === 'baseline') return state.raml.baseline?.exists ? state.raml.baseline.content : (state.raml.baseline?.message || 'Baseline RAML não encontrado.');
+  if (tab === 'diff') return state.raml.diff?.diff || 'Diff indisponível.';
+  if (tab === 'restore') return state.restore.preview?.diff || 'Nenhum preview de restore gerado ainda.';
+  return '';
+}
+
+function highlightSearch(text) {
+  const q = $('ramlSearch')?.value?.trim();
+  const escaped = esc(text);
+  if (!q) return escaped;
+  try {
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
+    return escaped.replace(re, m => `<mark>${m}</mark>`);
+  } catch (_) {
+    return escaped;
+  }
+}
+
+function renderRamlPreview() {
+  if (!$('ramlPreviewText')) return;
+  const text = currentRamlViewText();
+  $('ramlPreviewText').innerHTML = highlightSearch(text);
+}
+
+function renderRestoreAssistant() {
+  if (!$('restoreTable')) return;
+  const candidates = getRestoreCandidates();
+  const pathCount = candidates.filter(c => c.type === 'path-restore').length;
+  const blockCount = candidates.filter(c => c.type === 'endpoint-block-restore').length;
+  const restoreEvents = (state.history || []).filter(e => String(e.eventType || '').includes('RESTORE') || String(e.eventType || '').includes('RESTORED'));
+  if ($('restoreCards')) {
+    $('restoreCards').innerHTML = [
+      card('Candidatos', candidates.length, 'restore disponíveis', candidates.length ? 'WARN' : 'OK'),
+      card('Path restore', pathCount, 'possible replacements', pathCount ? 'WARN' : 'OK'),
+      card('Block restore', blockCount, 'exige baseline RAML', blockCount ? 'WARN' : 'OK'),
+      card('Restores executados', restoreEvents.length, 'histórico auditável', restoreEvents.length ? 'OK' : 'INFO')
+    ].join('');
+  }
+  $('restoreTable').innerHTML = `<thead><tr><th>Type</th><th>Method</th><th>Baseline path</th><th>Current/New path</th><th>Similarity</th><th>Decision</th><th>Ação</th></tr></thead><tbody>` + (candidates.length ? candidates.map((c, idx) => `<tr><td>${badge(c.type)}</td><td>${esc(c.method)}</td><td><code>${esc(c.oldPath || '-')}</code></td><td><code>${esc(c.newPath || '-')}</code></td><td>${esc(c.similarityScore || '-')}%</td><td>${badge(c.decision || 'INFO')}</td><td><button class="btn small primary" data-restore-candidate="${idx}">Restaurar</button> <button class="btn small" data-patch-candidate="${idx}">Gerar Patch</button></td></tr>`).join('') : '<tr><td colspan="7" class="muted">Nenhum candidato de restore detectado.</td></tr>') + '</tbody>';
+  document.querySelectorAll('[data-restore-candidate]').forEach(btn => btn.onclick = () => openRestoreModal(candidates[Number(btn.dataset.restoreCandidate)]));
+  document.querySelectorAll('[data-patch-candidate]').forEach(btn => btn.onclick = () => generatePatchForCandidate(candidates[Number(btn.dataset.patchCandidate)]));
+}
+
+async function buildRestorePreview(candidate) {
+  const payload = {
+    restoreType: candidate.type,
+    oldMethod: candidate.oldMethod || candidate.method,
+    oldPath: candidate.oldPath,
+    newMethod: candidate.newMethod || candidate.method,
+    newPath: candidate.newPath,
+    method: candidate.method,
+    path: candidate.oldPath,
+    similarityScore: candidate.similarityScore || 0
+  };
+  const preview = await api('/api/restore/preview', { method: 'POST', body: JSON.stringify(payload) });
+  state.restore.selected = candidate;
+  state.restore.preview = preview;
+  return preview;
+}
+
+async function openRestoreModal(candidate) {
+  try {
+    const preview = await buildRestorePreview(candidate);
+    $('restoreTitle').textContent = candidate.type === 'endpoint-block-restore' ? 'Restaurar bloco de endpoint' : 'Restaurar contrato antigo';
+    $('restoreTarget').innerHTML = `<code>${esc(candidate.oldMethod || candidate.method)} ${esc(candidate.oldPath)}</code>${candidate.newPath ? `<br>← atual: <code>${esc(candidate.newMethod || candidate.method)} ${esc(candidate.newPath)}</code>` : ''}`;
+    $('restoreSummary').innerHTML = `<div>${badge(candidate.type)}</div><div>Similarity: <strong>${esc(candidate.similarityScore || '-')}%</strong></div><div>Decision: ${badge(candidate.decision || 'BLOCK')}</div><div>Backup será criado em <code>release/backups</code>.</div>`;
+    $('restoreDiff').textContent = preview.diff || preview.error || preview.reason || 'Sem diff.';
+    const expected = pathGet(state.config, 'restore.confirmationText') || 'CONFIRMO RESTAURAR CONTRATO';
+    $('restoreConfirmationExpected').textContent = expected;
+    $('restoreConfirmation').value = '';
+    $('confirmRestore').disabled = true;
+    $('restoreRevokeApproval').checked = pathGet(state.config, 'restore.revokeApprovalAfterRestoreDefault') !== false;
+    $('restoreModal').classList.remove('hidden');
+    renderRamlPreview();
+  } catch (error) { msg(error.message, true); }
+}
+
+function openRestoreFromPossible(p) { openRestoreModal({ type: 'path-restore', method: p.oldMethod || p.method, oldMethod: p.oldMethod || p.method, oldPath: p.oldPath, newMethod: p.newMethod || p.method, newPath: p.newPath, similarityScore: p.similarityScore || 0, decision: p.decision || 'BLOCK' }); }
+function openRestoreFromRow(id) { const row = endpointRows().find(r => r.id === id); if (row?.possible) return openRestoreFromPossible(row.possible); if (row) openRestoreModal({ type: 'endpoint-block-restore', method: row.method, oldMethod: row.method, oldPath: row.path, decision: row.decision }); }
+async function showDiffForPossible(p) { await openRestoreFromPossible(p); state.raml.activeTab = 'restore'; document.querySelectorAll('.raml-tab').forEach(b => b.classList.toggle('active', b.dataset.ramlTab === 'restore')); renderRamlPreview(); }
+async function generatePatchForCandidate(candidate) { try { const preview = await buildRestorePreview(candidate); const res = await api('/api/restore/generate-patch', { method: 'POST', body: JSON.stringify({ ...candidate, restoreType: candidate.type }) }); msg(`Patch gerado: ${res.patchFile}`); $('restoreDiff').textContent = res.diff || preview.diff || ''; } catch (e) { msg(e.message, true); } }
+async function applyRestore() {
+  const candidate = state.restore.selected;
+  if (!candidate) return;
+  try {
+    const payload = { ...candidate, restoreType: candidate.type, confirmationText: $('restoreConfirmation').value, revokeApproval: $('restoreRevokeApproval').checked };
+    const result = await api('/api/restore/apply', { method: 'POST', body: JSON.stringify(payload) });
+    $('restoreModal').classList.add('hidden');
+    msg(`Restore aplicado com sucesso. Backup: ${result.backup?.backupFile || 'N/A'}`);
+    await loadAll();
+    await loadRamlPreview();
+  } catch (error) { msg(error.message, true); }
+}
 
 function renderHistory() {
   const events = state.history || [];
@@ -489,8 +639,9 @@ async function loadAll() {
   state.current = await api('/api/endpoints/current');
   try { state.diff = await api('/api/endpoints/diff'); } catch(e) { state.diff = { status:'BLOCKED', summary:{}, findings:[], possibleReplacements:[] }; }
   try { const hist = await api('/api/history?limit=300'); state.history = hist.events || []; state.historySummary = hist.summary || {}; } catch(e) { state.history = []; state.historySummary = {}; }
+  try { state.raml.current = await api('/api/raml/current'); state.raml.baseline = await api('/api/raml/baseline'); state.raml.diff = await api('/api/raml/diff'); } catch(e) {}
   $('breakingText').value = JSON.stringify(state.breaking, null, 2);
-  renderRuntime(); renderForms(); renderDashboard(); renderEndpoints(); renderHistory();
+  renderRuntime(); renderForms(); renderDashboard(); renderEndpoints(); renderHistory(); renderRamlPreview(); renderRestoreAssistant();
 }
 
 async function saveConfig() {
@@ -522,6 +673,16 @@ function bindUi() {
   $('refreshAll').onclick = loadAll;
   $('refreshEndpoints').onclick = loadAll;
   if ($('refreshHistory')) $('refreshHistory').onclick = loadAll;
+  if ($('refreshRamlPreview')) $('refreshRamlPreview').onclick = loadRamlPreview;
+  if ($('refreshRestore')) $('refreshRestore').onclick = async () => { await loadAll(); renderRestoreAssistant(); };
+  if ($('ramlSearch')) $('ramlSearch').oninput = renderRamlPreview;
+  document.querySelectorAll('.raml-tab').forEach(btn => btn.onclick = () => { document.querySelectorAll('.raml-tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); state.raml.activeTab = btn.dataset.ramlTab; renderRamlPreview(); });
+  if ($('copyRamlView')) $('copyRamlView').onclick = async () => { await navigator.clipboard.writeText(currentRamlViewText()); msg('Conteúdo copiado.'); };
+  if ($('closeRestoreModal')) $('closeRestoreModal').onclick = () => $('restoreModal').classList.add('hidden');
+  if ($('cancelRestore')) $('cancelRestore').onclick = () => $('restoreModal').classList.add('hidden');
+  if ($('restoreConfirmation')) $('restoreConfirmation').oninput = () => { $('confirmRestore').disabled = $('restoreConfirmation').value !== ($('restoreConfirmationExpected').textContent || 'CONFIRMO RESTAURAR CONTRATO'); };
+  if ($('generateRestorePatch')) $('generateRestorePatch').onclick = () => state.restore.selected && generatePatchForCandidate(state.restore.selected);
+  if ($('confirmRestore')) $('confirmRestore').onclick = applyRestore;
   $('validateConfig').onclick = async () => { const v = await api('/api/config/validate', { method:'POST', body: JSON.stringify({ config: state.config }) }); state.lastValidation = v; msg(v.valid ? ((v.warnings && v.warnings.length) ? 'Config válida com warnings: ' + v.warnings.join(' | ') : 'Configuração válida.') : v.errors.join(' | '), !v.valid); };
   $('saveConfig').onclick = saveConfig;
   $('saveBreaking').onclick = saveBreaking;
